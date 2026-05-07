@@ -1,7 +1,7 @@
 """MLR Agent — Major League Rugby scores, standings, and player stats.
 
 Schedule: Hourly, February through October (MLR season).
-Sources: mlrugby.com scores/schedule/results and standings/table pages.
+Sources: majorleague.rugby scores/schedule/results and standings/table pages.
 Writes to: /api/v1/ingest/match, /api/v1/ingest/standing
 """
 
@@ -18,26 +18,26 @@ from tools.scraper import ScraperError, fetch_html
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash-lite"
+GEMINI_REASONING = "gemini-2.5-flash"
 GEMINI_WRITING_PRO = "gemini-2.5-pro"
 
 MLR_SCORES_URLS = [
-    "https://mlrugby.com/scores",
-    "https://mlrugby.com/schedule",
-    "https://mlrugby.com/results",
-    "https://mlrugby.com/games",
-    "https://www.mlrugby.com/scores",
-    "https://www.mlrugby.com/schedule",
-    "https://www.mlrugby.com/results",
-    "https://www.mlrugby.com/games",
+    "https://majorleague.rugby/scores",
+    "https://majorleague.rugby/schedule",
+    "https://majorleague.rugby/results",
+    "https://majorleague.rugby/games",
+    "https://www.majorleague.rugby/scores",
+    "https://www.majorleague.rugby/schedule",
+    "https://www.majorleague.rugby/results",
+    "https://www.majorleague.rugby/games",
 ]
 MLR_STANDINGS_URLS = [
-    "https://mlrugby.com/standings",
-    "https://mlrugby.com/table",
-    "https://mlrugby.com/league-table",
-    "https://www.mlrugby.com/standings",
-    "https://www.mlrugby.com/table",
-    "https://www.mlrugby.com/league-table",
+    "https://majorleague.rugby/standings",
+    "https://majorleague.rugby/table",
+    "https://majorleague.rugby/league-table",
+    "https://www.majorleague.rugby/standings",
+    "https://www.majorleague.rugby/table",
+    "https://www.majorleague.rugby/league-table",
 ]
 
 KNOWN_MLR_TEAMS = {

@@ -1,7 +1,7 @@
 """College Agent — CRAA D1A college rugby scores and standings.
 
 Schedule: Every 2 hours.
-Sources: craa.rugbyaffinitysports.com.
+Sources: collegiaterugby.com, craa.org, rugbyaffinitysports.com/craa.
 Writes to: /api/v1/ingest/match, /api/v1/ingest/standing
 """
 
@@ -18,15 +18,22 @@ from tools.scraper import ScraperError, fetch_html
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash-lite"
+GEMINI_REASONING = "gemini-2.5-flash"
 
-CRAA_BASE = "https://craa.rugbyaffinitysports.com"
-CRAA_SCORES_URL = f"{CRAA_BASE}/scores"
-CRAA_STANDINGS_URL = f"{CRAA_BASE}/standings"
-CRAA_ALT_URLS = [
-    f"{CRAA_BASE}/results",
-    f"{CRAA_BASE}/schedule",
-    CRAA_BASE,
+CRAA_BASE_URLS = [
+    "https://www.collegiaterugby.com",
+    "https://craa.org",
+    "https://rugbyaffinitysports.com/craa",
+]
+CRAA_SCORES_URLS = [
+    f"{base}{path}"
+    for base in CRAA_BASE_URLS
+    for path in ("/scores", "/results", "/schedule", "")
+]
+CRAA_STANDINGS_URLS = [
+    f"{base}{path}"
+    for base in CRAA_BASE_URLS
+    for path in ("/standings", "/table", "/league-table", "")
 ]
 
 FETCH_DELAY = 1.0
@@ -208,13 +215,14 @@ def run_college_agent() -> dict[str, Any]:
     parsed_matches: list[dict[str, Any]] = []
     scores_fetched = False
 
-    for url in [CRAA_SCORES_URL] + CRAA_ALT_URLS:
+    for url in CRAA_SCORES_URLS:
         try:
             logger.info("Fetching college scores from %s", url)
             soup = fetch_html(url)
             parsed_matches = _parse_scores_page(soup)
             if parsed_matches:
                 scores_fetched = True
+                logger.info("College scores URL succeeded: %s", url)
                 break
         except ScraperError as exc:
             logger.warning("Failed to fetch %s: %s", url, exc)
@@ -284,14 +292,22 @@ def run_college_agent() -> dict[str, Any]:
     time.sleep(FETCH_DELAY)
 
     parsed_standings: list[dict[str, Any]] = []
-    try:
-        logger.info("Fetching college standings from %s", CRAA_STANDINGS_URL)
-        soup = fetch_html(CRAA_STANDINGS_URL)
-        parsed_standings = _parse_standings_page(soup)
-    except ScraperError as exc:
-        msg = f"Failed to fetch college standings: {exc}"
-        logger.error(msg)
-        summary["errors"].append(msg)
+    standings_fetched = False
+    for url in CRAA_STANDINGS_URLS:
+        try:
+            logger.info("Fetching college standings from %s", url)
+            soup = fetch_html(url)
+            parsed_standings = _parse_standings_page(soup)
+            if parsed_standings:
+                standings_fetched = True
+                logger.info("College standings URL succeeded: %s", url)
+                break
+        except ScraperError as exc:
+            logger.warning("Failed to fetch %s: %s", url, exc)
+        time.sleep(FETCH_DELAY)
+
+    if not standings_fetched and not parsed_standings:
+        summary["errors"].append("Could not fetch standings from any CRAA URL")
 
     for row in parsed_standings:
         team_name = row["team_name"]

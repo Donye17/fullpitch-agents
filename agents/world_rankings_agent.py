@@ -18,7 +18,7 @@ from tools.scraper import ScraperError, fetch_html
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash-lite"
+GEMINI_REASONING = "gemini-2.5-flash"
 
 RANKINGS_URLS = {
     "men": "https://www.world.rugby/rankings/mru",

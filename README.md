@@ -45,7 +45,7 @@ python main.py --agent wer
 
 | Constant | Model | Use |
 |----------|-------|-----|
-| `GEMINI_REASONING` | `gemini-2.5-flash-lite` | Agent logic, classification, dedup |
+| `GEMINI_REASONING` | `gemini-2.5-flash` | Agent logic, classification, dedup |
 | `GEMINI_WRITING_MID` | `gemini-2.5-flash` | Summaries, recaps |
 | `GEMINI_WRITING_PRO` | `gemini-2.5-pro` | Match reports, spotlights |
 

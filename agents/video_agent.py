@@ -22,7 +22,7 @@ from tools.scraper import ScraperError, fetch_html
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash-lite"
+GEMINI_REASONING = "gemini-2.5-flash"
 
 MAX_AGE_DAYS = 30
 QUERY_DELAY_SECONDS = 0.5

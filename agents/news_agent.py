@@ -1,7 +1,7 @@
 """News Agent — article ingest with US rugby relevance filter.
 
 Schedule: Hourly.
-Sources: mlrugby.com/news, usa.rugby/news, rugbypass.com, ultimaterugby.com,
+Sources: majorleague.rugby/news, usa.rugby/news, rugbypass.com, ultimaterugby.com,
          Reddit (r/MLRugby, r/usarugby, r/rugbyunion, r/collegiaterugby).
 Writes to: /api/v1/ingest/article
 """
@@ -24,13 +24,13 @@ from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash-lite"
+GEMINI_REASONING = "gemini-2.5-flash"
 GEMINI_WRITING_MID = "gemini-2.5-flash"
 
 MAX_AGE_DAYS = 7
 
 WEB_SOURCES: list[dict[str, Any]] = [
-    {"url": "https://www.mlrugby.com/news", "league": "mlr"},
+    {"url": "https://www.majorleague.rugby/news", "league": "mlr"},
     {"url": "https://www.usa.rugby/news", "league": "eagles"},
     {"url": "https://www.rugbypass.com/news", "filter": True},
     {"url": "https://www.ultimaterugby.com", "filter": True},

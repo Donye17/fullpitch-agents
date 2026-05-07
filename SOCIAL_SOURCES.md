@@ -139,7 +139,7 @@ Add Reddit alongside web sources:
 ```python
 SOURCES = [
     # Web
-    {"url": "mlrugby.com/news", "type": "scrape", "league": "mlr"},
+    {"url": "majorleague.rugby/news", "type": "scrape", "league": "mlr"},
     {"url": "usa.rugby/news", "type": "scrape", "league": "eagles"},
     {"url": "rugbypass.com", "type": "scrape", "filter": True},
     {"url": "ultimaterugby.com", "type": "scrape", "filter": True},

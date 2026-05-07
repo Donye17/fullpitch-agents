@@ -21,7 +21,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fullpitch-agents")
 
-GEMINI_REASONING = "gemini-2.5-flash-lite"
+GEMINI_REASONING = "gemini-2.5-flash"
 GEMINI_WRITING_MID = "gemini-2.5-flash"
 GEMINI_WRITING_PRO = "gemini-2.5-pro"
 

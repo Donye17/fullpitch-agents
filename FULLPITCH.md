@@ -47,7 +47,7 @@ Fullpitch (`fullpitch.app`) is the only comprehensive US rugby data platform —
 | Staging | Vercel Preview + Neon DB branch | Free — separate from production |
 | Agent hosting | Railway | $5/month — Python, always-on |
 | Agent framework | Google ADK (Python) | Multi-agent orchestration |
-| Agent model — reasoning | `gemini-2.5-flash-lite` | High volume, cheap, free tier |
+| Agent model — reasoning | `gemini-2.5-flash` | Agent logic, classification, dedup |
 | Agent model — writing mid | `gemini-2.5-flash` | Summaries, recaps |
 | Agent model — writing pro | `gemini-2.5-pro` | Match reports, spotlights |
 
@@ -58,7 +58,7 @@ Fullpitch (`fullpitch.app`) is the only comprehensive US rugby data platform —
 > [!important] Locked Decisions — Never Change
 > - Agents = Google ADK Python on Railway. Never TypeScript. Never Cloudflare Workers.
 > - `gemini-2.0-flash` is deprecated — shuts down June 1 2026. Never use it.
-> - Use only: `gemini-2.5-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-pro`
+> - Use only: `gemini-2.5-flash`, `gemini-2.5-pro`
 > - UI = Tailwind + shadcn/ui. Mobile-first always.
 > - Auth = Clerk. Three roles: `admin`, `program_rep`, `user`
 > - All REST API routes versioned: `/api/v1/`
@@ -304,7 +304,7 @@ fullpitch-agents/
 ### Gemini Model Constants
 
 ```python
-GEMINI_REASONING   = "gemini-2.5-flash-lite"  # agent logic, classification, dedup
+GEMINI_REASONING   = "gemini-2.5-flash"       # agent logic, classification, dedup
 GEMINI_WRITING_MID = "gemini-2.5-flash"        # summaries, recaps, mid content
 GEMINI_WRITING_PRO = "gemini-2.5-pro"          # match reports, spotlights
 ```
@@ -474,7 +474,7 @@ These must be copied to new project before deleting old folder:
 |------|----------|
 | May 2026 | 100% fresh start — new project folder, clean codebase, delete old repo |
 | May 2026 | ADK Python on Railway — locked forever, never TypeScript, never Workers |
-| May 2026 | Gemini 2.5 models only — flash-lite (reasoning), flash (mid), pro (quality) |
+| May 2026 | Gemini 2.5 models only — flash (reasoning/mid), pro (quality) |
 | May 2026 | Gemini 2.0 Flash deprecated June 1 2026 — never reference it |
 | May 2026 | Auth: Clerk — 3 roles: admin, program_rep, user |
 | May 2026 | Program rep system: Option C hybrid — community submits, reps self-manage |
@@ -503,6 +503,7 @@ These must be copied to new project before deleting old folder:
 | May 2026 | App repo path: `C:\Users\josh\Desktop\Fullpitch` — Next.js 15 scaffold in folder root (no subfolder); npm package name `fullpitch` |
 | May 2026 | Prisma 7 — URL in `prisma.config.ts`, adapter-pg pattern (`datasource.url` in config; Prisma 7.8 has no `datasourceUrl` key — `db push` requires `datasource.url`). No URL in `schema.prisma`. |
 | May 2026 | Agent HTTP fixes: API client and direct `httpx.get` calls follow redirects; MLR and WER source URL fallback chains updated after 307/404/DNS failures. |
+| May 2026 | Agent reasoning model switched to `gemini-2.5-flash` because the lower-quota lite model is too constrained for video/news classification volume. MLR sources moved to `majorleague.rugby`; CRAA sources moved off the dead RugbyAffinity subdomain. |
 | May 2026 | Clerk — roles in `publicMetadata.role` (`admin` \| `program_rep` \| `user`); route gating in `clerkMiddleware` + `clerkClient.users.getUser`; webhooks via `verifyWebhook` + `CLERK_WEBHOOK_SIGNING_SECRET` |
 | Apr 2026 | Brand book and homepage mockup finalized |
 
