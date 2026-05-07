@@ -17,5 +17,6 @@ INSTRUCTIONS:
 - Mention standout performers if data is available
 - Note conference/playoff implications if relevant
 - Do not fabricate details not in the match data
+- Never use em dashes (—) or en dashes (–) in your response. Use commas, colons, or periods instead.
 
 OUTPUT: The match report text only. No title, no metadata.

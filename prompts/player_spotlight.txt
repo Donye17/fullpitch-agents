@@ -12,11 +12,12 @@ PLAYER DATA:
 
 INSTRUCTIONS:
 - Write 300-500 words
-- Feature article tone — engaging but factual
+- Feature article tone, engaging but factual
 - Lead with what makes this player notable right now
 - Reference specific stats from the data
 - Include context about their team's season
 - Do not fabricate achievements not in the data
 - End with what to watch for going forward
+- Never use em dashes (—) or en dashes (–) in your response. Use commas, colons, or periods instead.
 
 OUTPUT: The spotlight article text only. No title, no metadata.

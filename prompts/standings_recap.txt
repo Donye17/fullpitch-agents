@@ -15,7 +15,8 @@ INSTRUCTIONS:
 - Highlight teams that moved up or down
 - Note any surprise results from the week
 - Mention upcoming key matchups if relevant
-- Data-driven — reference actual points, records, margins
+- Data-driven, reference actual points, records, margins
 - Do not fabricate stats not in the data
+- Never use em dashes (—) or en dashes (–) in your response. Use commas, colons, or periods instead.
 
 OUTPUT: The recap text only. No title, no metadata.

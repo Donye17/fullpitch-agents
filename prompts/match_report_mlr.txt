@@ -21,5 +21,6 @@ INSTRUCTIONS:
 - No cliches like "nail-biter" or "edge-of-your-seat"
 - Do not fabricate details not in the match data
 - End with what's next for both teams if known
+- Never use em dashes (—) or en dashes (–) in your response. Use commas, colons, or periods instead.
 
 OUTPUT: The match report text only. No title, no metadata.

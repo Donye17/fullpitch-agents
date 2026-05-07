@@ -14,5 +14,6 @@ INSTRUCTIONS:
 - Focus on what matters to US rugby fans
 - Do not add opinions or analysis
 - Do not start with "This article..."
+- Never use em dashes (—) or en dashes (–) in your response. Use commas, colons, or periods instead.
 
 OUTPUT: The summary text only.

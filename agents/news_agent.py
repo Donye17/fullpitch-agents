@@ -20,6 +20,7 @@ from urllib.parse import urljoin, urlparse
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import ScraperError, fetch_html
 from tools.search import fetch_subreddit_new, rate_limit_reddit
+from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ def _generate_summary(title: str, content: str, source: str, client) -> str | No
             model=GEMINI_WRITING_MID,
             contents=prompt,
         )
-        return resp.text.strip()
+        return clean_text(resp.text)
     except Exception:
         logger.exception("Gemini summary generation failed for '%s'", title[:80])
         return None
