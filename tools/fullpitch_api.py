@@ -4,6 +4,8 @@ All writes go through /api/v1/ingest/ endpoints with Bearer auth.
 All reads go through /api/v1/ public endpoints.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 from typing import Any
@@ -12,64 +14,150 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = os.getenv("FULLPITCH_API_URL", "https://fullpitch.app")
-API_KEY = os.getenv("FULLPITCH_API_KEY", "")
 
-_client: httpx.Client | None = None
+class FullpitchAPIError(Exception):
+    """Raised when the Fullpitch API returns a non-200 response."""
+
+    def __init__(self, method: str, url: str, status: int, body: str) -> None:
+        self.status = status
+        super().__init__(f"{method} {url} returned {status}: {body}")
 
 
-def _get_client() -> httpx.Client:
-    global _client
-    if _client is None:
-        _client = httpx.Client(
-            base_url=BASE_URL,
+class FullpitchAPI:
+    """Sync client for the Fullpitch REST API."""
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        self.base_url = (base_url or os.getenv("FULLPITCH_API_URL", "https://fullpitch.app")).rstrip("/")
+        self.api_key = api_key or os.getenv("FULLPITCH_API_KEY", "")
+        self._client = httpx.Client(
+            base_url=self.base_url,
             timeout=30.0,
             headers={"User-Agent": "FullpitchAgent/1.0"},
         )
-    return _client
 
+    # ── internal helpers ──────────────────────────────────────────────────
 
-def _auth_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {API_KEY}"}
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"}
 
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        url = f"/api/v1/{path}"
+        logger.info("GET %s%s %s", self.base_url, url, params or "")
+        resp = self._client.get(url, params=params)
+        if resp.status_code != 200:
+            raise FullpitchAPIError("GET", f"{self.base_url}{url}", resp.status_code, resp.text[:500])
+        return resp.json()
 
-def get(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Public read from /api/v1/."""
-    response = _get_client().get(f"/api/v1/{path}", params=params)
-    response.raise_for_status()
-    return response.json()
+    def _post(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
+        url = f"/api/v1/ingest/{path}"
+        logger.info("POST %s%s", self.base_url, url)
+        resp = self._client.post(url, json=data, headers=self._auth_headers())
+        if resp.status_code not in (200, 201):
+            raise FullpitchAPIError("POST", f"{self.base_url}{url}", resp.status_code, resp.text[:500])
+        return resp.json()
 
+    # ── READ methods ──────────────────────────────────────────────────────
 
-def ingest(endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
-    """Authenticated write to /api/v1/ingest/."""
-    response = _get_client().post(
-        f"/api/v1/ingest/{endpoint}",
-        json=data,
-        headers=_auth_headers(),
-    )
-    response.raise_for_status()
-    return response.json()
+    def get_recent_matches(
+        self, league: str | None = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """GET /api/v1/matches — recent matches, optionally filtered by league."""
+        params: dict[str, Any] = {"limit": limit}
+        if league:
+            params["league"] = league
+        envelope = self._get("matches", params)
+        return envelope.get("data", [])
 
+    def get_team(
+        self, name: str | None = None, id: str | None = None
+    ) -> dict[str, Any] | None:
+        """GET /api/v1/teams/[id] or search by name via /api/v1/teams?name=."""
+        if id:
+            try:
+                envelope = self._get(f"teams/{id}")
+                return envelope.get("data")
+            except FullpitchAPIError as exc:
+                if exc.status == 404:
+                    return None
+                raise
+        if name:
+            envelope = self._get("teams", {"name": name, "limit": 1})
+            items = envelope.get("data", [])
+            return items[0] if items else None
+        return None
 
-def ingest_match(data: dict[str, Any]) -> dict[str, Any]:
-    return ingest("match", data)
+    def get_player(
+        self, name: str | None = None, id: str | None = None
+    ) -> dict[str, Any] | None:
+        """GET /api/v1/players/[id] or search by name via /api/v1/players."""
+        if id:
+            try:
+                envelope = self._get(f"players/{id}")
+                return envelope.get("data")
+            except FullpitchAPIError as exc:
+                if exc.status == 404:
+                    return None
+                raise
+        if name:
+            envelope = self._get("players", {"name": name, "limit": 1})
+            items = envelope.get("data", [])
+            return items[0] if items else None
+        return None
 
+    def get_standings(
+        self, league: str | None = None, season: str | None = None
+    ) -> list[dict[str, Any]]:
+        """GET /api/v1/standings — filtered by league and/or season."""
+        params: dict[str, Any] = {}
+        if league:
+            params["league"] = league
+        if season:
+            params["season"] = season
+        envelope = self._get("standings", params or None)
+        return envelope.get("data", [])
 
-def ingest_standing(data: dict[str, Any]) -> dict[str, Any]:
-    return ingest("standing", data)
+    def get_recent_articles(self, limit: int = 20) -> list[dict[str, Any]]:
+        """GET /api/v1/articles — most recent articles."""
+        envelope = self._get("articles", {"limit": limit})
+        return envelope.get("data", [])
 
+    def get_recent_videos(self, limit: int = 20) -> list[dict[str, Any]]:
+        """GET /api/v1/videos — most recent videos."""
+        envelope = self._get("videos", {"limit": limit})
+        return envelope.get("data", [])
 
-def ingest_article(data: dict[str, Any]) -> dict[str, Any]:
-    return ingest("article", data)
+    # ── WRITE methods ─────────────────────────────────────────────────────
 
+    def upsert_match(self, data: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/v1/ingest/match — idempotent match upsert."""
+        logger.info("Upserting match: %s vs %s", data.get("homeTeamId", "?"), data.get("awayTeamId", "?"))
+        return self._post("match", data)
 
-def ingest_video(data: dict[str, Any]) -> dict[str, Any]:
-    return ingest("video", data)
+    def upsert_standing(self, data: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/v1/ingest/standing — idempotent standing upsert."""
+        logger.info("Upserting standing: team=%s league=%s", data.get("teamId", "?"), data.get("league", "?"))
+        return self._post("standing", data)
 
+    def create_article(self, data: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/v1/ingest/article — create article (skips duplicates by URL)."""
+        logger.info("Creating article: %s", data.get("title", "?")[:80])
+        return self._post("article", data)
 
-def ingest_player(data: dict[str, Any]) -> dict[str, Any]:
-    return ingest("player", data)
+    def create_video(self, data: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/v1/ingest/video — create video (skips duplicates by videoId)."""
+        logger.info("Creating video: %s", data.get("title", "?")[:80])
+        return self._post("video", data)
 
+    def upsert_player(self, data: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/v1/ingest/player — idempotent player upsert."""
+        logger.info("Upserting player: %s", data.get("name", "?"))
+        return self._post("player", data)
 
-def ingest_conflict(data: dict[str, Any]) -> dict[str, Any]:
-    return ingest("conflict", data)
+    def flag_conflict(self, data: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/v1/ingest/conflict — flag a data conflict for admin review."""
+        logger.info("Flagging conflict: %s.%s", data.get("model", "?"), data.get("field", "?"))
+        return self._post("conflict", data)
