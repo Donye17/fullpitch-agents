@@ -42,6 +42,8 @@ class FullpitchAPI:
     # ── internal helpers ──────────────────────────────────────────────────
 
     def _auth_headers(self) -> dict[str, str]:
+        if not self.api_key:
+            return {}
         return {"Authorization": f"Bearer {self.api_key}"}
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
