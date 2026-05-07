@@ -28,12 +28,13 @@ GEMINI_WRITING_PRO = "gemini-2.5-pro"
 AGENT_MAP = {
     "boss": "agents.boss_agent",
     "mlr": "agents.mlr_agent",
+    "wer": "agents.wer_agent",
+    "world-rankings": "agents.world_rankings_agent",
     "news": "agents.news_agent",
     "video": "agents.video_agent",
     "eagles": "agents.eagles_agent",
     "college": "agents.college_agent",
     "content": "agents.content_agent",
-    "wer": "agents.wer_agent",
 }
 
 
