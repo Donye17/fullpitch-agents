@@ -1,7 +1,7 @@
 """MLR Agent — Major League Rugby scores, standings, and player stats.
 
 Schedule: Hourly, February through October (MLR season).
-Sources: mlrugby.com/scores, mlrugby.com/standings.
+Sources: mlrugby.com scores/schedule/results and standings/table pages.
 Writes to: /api/v1/ingest/match, /api/v1/ingest/standing
 """
 
@@ -21,8 +21,24 @@ logger = logging.getLogger(__name__)
 GEMINI_REASONING = "gemini-2.5-flash-lite"
 GEMINI_WRITING_PRO = "gemini-2.5-pro"
 
-MLR_SCORES_URL = "https://www.mlrugby.com/scores"
-MLR_STANDINGS_URL = "https://www.mlrugby.com/standings"
+MLR_SCORES_URLS = [
+    "https://mlrugby.com/scores",
+    "https://mlrugby.com/schedule",
+    "https://mlrugby.com/results",
+    "https://mlrugby.com/games",
+    "https://www.mlrugby.com/scores",
+    "https://www.mlrugby.com/schedule",
+    "https://www.mlrugby.com/results",
+    "https://www.mlrugby.com/games",
+]
+MLR_STANDINGS_URLS = [
+    "https://mlrugby.com/standings",
+    "https://mlrugby.com/table",
+    "https://mlrugby.com/league-table",
+    "https://www.mlrugby.com/standings",
+    "https://www.mlrugby.com/table",
+    "https://www.mlrugby.com/league-table",
+]
 
 KNOWN_MLR_TEAMS = {
     "chicago hounds",
@@ -46,6 +62,19 @@ KNOWN_MLR_TEAMS = {
 }
 
 _gemini_verified_cache: dict[str, bool] = {}
+
+
+def _fetch_first_available(urls: list[str], label: str):
+    """Try each source URL until one fetches successfully."""
+    for url in urls:
+        try:
+            logger.info("Trying MLR %s URL: %s", label, url)
+            soup = fetch_html(url)
+            logger.info("MLR %s URL succeeded: %s", label, url)
+            return soup, url
+        except ScraperError as exc:
+            logger.warning("MLR %s URL failed (%s): %s", label, url, exc)
+    return None, None
 
 
 def _normalize_team_name(name: str) -> str:
@@ -260,13 +289,13 @@ def run_mlr_agent() -> dict[str, Any]:
 
     # ── Step 1–3: Scores ──────────────────────────────────────────────────
 
-    try:
-        logger.info("Fetching MLR scores from %s", MLR_SCORES_URL)
-        scores_soup = fetch_html(MLR_SCORES_URL)
+    scores_soup, scores_url = _fetch_first_available(MLR_SCORES_URLS, "scores")
+    if scores_soup:
         parsed_matches = _parse_scores_page(scores_soup)
         summary["matches_found"] = len(parsed_matches)
-    except ScraperError as exc:
-        msg = f"Failed to fetch scores page: {exc}"
+        logger.info("Got %d MLR matches from %s", len(parsed_matches), scores_url)
+    else:
+        msg = "Failed to fetch any MLR scores page"
         logger.error(msg)
         summary["errors"].append(msg)
         parsed_matches = []
@@ -361,12 +390,12 @@ def run_mlr_agent() -> dict[str, Any]:
 
     # ── Step 4–6: Standings ───────────────────────────────────────────────
 
-    try:
-        logger.info("Fetching MLR standings from %s", MLR_STANDINGS_URL)
-        standings_soup = fetch_html(MLR_STANDINGS_URL)
+    standings_soup, standings_url = _fetch_first_available(MLR_STANDINGS_URLS, "standings")
+    if standings_soup:
         parsed_standings = _parse_standings_page(standings_soup)
-    except ScraperError as exc:
-        msg = f"Failed to fetch standings page: {exc}"
+        logger.info("Got %d MLR standings rows from %s", len(parsed_standings), standings_url)
+    else:
+        msg = "Failed to fetch any MLR standings page"
         logger.error(msg)
         summary["errors"].append(msg)
         parsed_standings = []

@@ -269,7 +269,8 @@ fullpitch-agents/
 │   ├── eagles_agent.py      ← USA Eagles results
 │   ├── college_agent.py     ← college scores + standings
 │   ├── content_agent.py     ← AI content writer (reports, recaps)
-│   └── wer_agent.py         ← World Rugby Rankings
+│   ├── wer_agent.py         ← Women's Elite Rugby scores + standings
+│   └── world_rankings_agent.py ← World Rugby Rankings (USA position)
 ├── tools/
 │   ├── fullpitch_api.py     ← REST API wrapper (read + write)
 │   ├── search.py            ← web search utility
@@ -296,7 +297,8 @@ fullpitch-agents/
 | `video-agent` | Daily 6am UTC | YouTube discovery |
 | `eagles-agent` | Daily 7am UTC | USA Eagles results |
 | `college-agent` | Every 2 hours | College scores + standings |
-| `wer-agent` | Daily 8am UTC | World rankings |
+| `wer-agent` | Hourly during WER season | Women's Elite Rugby scores + standings |
+| `world-rankings-agent` | Daily 8am UTC | World rankings |
 | `content-agent` | Triggered by other agents | Match reports, recaps |
 
 ### Gemini Model Constants
@@ -446,6 +448,7 @@ These must be copied to new project before deleting old folder:
 - **Step 19 (roadmap):** Admin agent log viewer complete — `/admin/agents` shows paginated `AgentLog` runs with agent-name/date filters, derived finished time, ingested/skipped/error counts, expandable JSON/error details, and unresolved `DataConflict` rows using the existing moderation resolution actions. `npx tsc --noEmit` and `npm run build` pass.
 - **Step 20 (roadmap):** Program rep dashboard complete — `src/app/dashboard/layout.tsx` guards with `requireProgramRep()`, looks up `User.programId` for team linkage, renders responsive sidebar (Overview, Roster, Results, Schedule, Team Info). Pages: `/dashboard` (overview with W/D/L, last 5 results, next match, roster count), `/dashboard/roster` (player list with add/edit/remove, uses Player model fields: canonicalName, firstName, lastName, position), `/dashboard/results` (submit completed match results with opponent select, home/away, scores; source="program_rep"), `/dashboard/schedule` (add upcoming games with opponent, date, location; status=SCHEDULED), `/dashboard/team` (edit team profile fields: name, shortName, abbreviation, headCoach, city, state, stadium, stadiumCapacity, logoUrl, colors, website, social handles, description; read-only competition/gender/format/level). All actions verify team ownership via `programId`. Raw SQL for Team updates to avoid Prisma enum issues. `npx tsc --noEmit` and `npm run build` pass.
 - **Step 21 (roadmap):** Program claim flow complete — `/claim/[teamId]` public page (viewable by anyone, submission requires Clerk sign-in) with form fields: name, role (Head Coach / Assistant Coach / Athletic Director / Team Manager / Other), email, optional verification message. Creates `Claim` record with `status="pending"`. Pre-fills name/email from Clerk if signed in. Prevents duplicate pending claims. Success/duplicate confirmation pages. `/teams/[id]` public team page showing team info, current standing, next match, recent results, roster; "Claim This Program" button appears only when team has no approved claim. `src/lib/claims.ts` provides standalone `approveClaim(claimId, adminClerkId)` and `rejectClaim(claimId, adminClerkId, reason?)` helpers. `npx tsc --noEmit` and `npm run build` pass.
+- **Agent source reliability fixes:** `FullpitchAPI` uses `httpx.Client(follow_redirects=True)` to handle 307s on all API reads/writes. Direct `httpx.get` helpers also follow redirects. `mlr_agent.py` uses no-`www` MLR URL fallback chains for scores/schedule/results/games and standings/table/league-table, logging the URL that succeeds. `wer_agent.py` uses the official WER domain `https://www.womenseliterugby.us` with `/2026-schedule` and `/standings` first, with older domains as fallbacks. `python -m compileall tools agents` passes.
 
 ### ⚠️ In Progress
 - Saving remaining assets from old project (seeds, `videos-backup.json`) as needed
@@ -499,6 +502,7 @@ These must be copied to new project before deleting old folder:
 | May 2026 | College gap: launch CRAA D1A + MLR, grow via program rep claims |
 | May 2026 | App repo path: `C:\Users\josh\Desktop\Fullpitch` — Next.js 15 scaffold in folder root (no subfolder); npm package name `fullpitch` |
 | May 2026 | Prisma 7 — URL in `prisma.config.ts`, adapter-pg pattern (`datasource.url` in config; Prisma 7.8 has no `datasourceUrl` key — `db push` requires `datasource.url`). No URL in `schema.prisma`. |
+| May 2026 | Agent HTTP fixes: API client and direct `httpx.get` calls follow redirects; MLR and WER source URL fallback chains updated after 307/404/DNS failures. |
 | May 2026 | Clerk — roles in `publicMetadata.role` (`admin` \| `program_rep` \| `user`); route gating in `clerkMiddleware` + `clerkClient.users.getUser`; webhooks via `verifyWebhook` + `CLERK_WEBHOOK_SIGNING_SECRET` |
 | Apr 2026 | Brand book and homepage mockup finalized |
 

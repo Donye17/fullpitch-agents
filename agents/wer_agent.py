@@ -1,7 +1,7 @@
 """WER Agent — Women's Elite Rugby scores and standings.
 
 Schedule: Hourly during WER season.
-Sources: weliterugby.com/scores, weliterugby.com/standings.
+Sources: womenseliterugby.us schedule and standings.
 Writes to: /api/v1/ingest/match, /api/v1/ingest/standing
 """
 
@@ -20,18 +20,31 @@ logger = logging.getLogger(__name__)
 
 GEMINI_REASONING = "gemini-2.5-flash-lite"
 
-WER_BASE = "https://www.weliterugby.com"
+WER_BASE = "https://www.womenseliterugby.us"
 WER_SCORES_URLS = [
+    f"{WER_BASE}/2026-schedule",
     f"{WER_BASE}/scores",
     f"{WER_BASE}/schedule",
     f"{WER_BASE}/results",
     WER_BASE,
+    "https://womenseliterugby.us/2026-schedule",
+    "https://womenseliterugby.us/schedule",
+    "https://womenseliterugby.us/results",
+    "https://wer.rugby/scores",
+    "https://wer.rugby/schedule",
+    "https://www.weliterugby.com/scores",
+    "https://www.weliterugby.com/schedule",
 ]
 WER_STANDINGS_URLS = [
     f"{WER_BASE}/standings",
+    f"{WER_BASE}/stats",
     f"{WER_BASE}/table",
     f"{WER_BASE}/league-table",
     WER_BASE,
+    "https://womenseliterugby.us/standings",
+    "https://womenseliterugby.us/stats",
+    "https://wer.rugby/standings",
+    "https://www.weliterugby.com/standings",
 ]
 WER_TEAMS_URL = f"{WER_BASE}/teams"
 

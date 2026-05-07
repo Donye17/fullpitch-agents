@@ -87,7 +87,7 @@ def _search_youtube_api(query: str, api_key: str) -> list[dict[str, Any]]:
         "key": api_key,
     }
     try:
-        resp = httpx.get(YOUTUBE_API_URL, params=params, timeout=15)
+        resp = httpx.get(YOUTUBE_API_URL, params=params, timeout=15, follow_redirects=True)
         if resp.status_code != 200:
             logger.error("YouTube API returned %d: %s", resp.status_code, resp.text[:300])
             return []

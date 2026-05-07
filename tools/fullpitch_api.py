@@ -37,6 +37,7 @@ class FullpitchAPI:
             base_url=self.base_url,
             timeout=30.0,
             headers={"User-Agent": "FullpitchAgent/1.0"},
+            follow_redirects=True,
         )
 
     # ── internal helpers ──────────────────────────────────────────────────

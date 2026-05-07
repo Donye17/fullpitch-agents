@@ -21,7 +21,7 @@ def fetch_subreddit_new(subreddit: str, limit: int = 25) -> list[dict]:
     headers = {"User-Agent": REDDIT_USER_AGENT}
 
     try:
-        response = httpx.get(url, params=params, headers=headers, timeout=15)
+        response = httpx.get(url, params=params, headers=headers, timeout=15, follow_redirects=True)
         response.raise_for_status()
         return response.json()["data"]["children"]
     except Exception:
@@ -36,7 +36,7 @@ def search_reddit(subreddit: str, query: str, limit: int = 10) -> list[dict]:
     headers = {"User-Agent": REDDIT_USER_AGENT}
 
     try:
-        response = httpx.get(url, params=params, headers=headers, timeout=15)
+        response = httpx.get(url, params=params, headers=headers, timeout=15, follow_redirects=True)
         response.raise_for_status()
         return response.json()["data"]["children"]
     except Exception:
