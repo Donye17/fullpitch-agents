@@ -7,16 +7,21 @@ Exponential backoff on 429/503 (up to 3 retries: 2s, 4s, 8s).
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-USER_AGENT = "FullpitchBot/1.0"
+USER_AGENT = "Fullpitch/1.0 (fullpitch.app)"
 MAX_RETRIES = 3
 BACKOFF_BASE = 2  # seconds — retries at 2, 4, 8
+DOMAIN_DELAY_SECONDS = 2.0
+_domain_last_request: dict[str, float] = {}
+_domain_lock = threading.Lock()
 
 
 class ScraperError(Exception):
@@ -36,14 +41,14 @@ def _request_with_retry(
     timeout: float = 15.0,
 ) -> httpx.Response:
     """GET with exponential backoff on 429 and 503."""
-    merged_headers = {"User-Agent": USER_AGENT}
-    if headers:
-        merged_headers.update(headers)
+    merged_headers = dict(headers or {})
+    merged_headers["User-Agent"] = USER_AGENT
 
     last_status = 0
     for attempt in range(1, MAX_RETRIES + 1):
         logger.info("Fetching %s (attempt %d/%d)", url, attempt, MAX_RETRIES)
         try:
+            _pause_for_domain(url)
             resp = httpx.get(
                 url,
                 headers=merged_headers,
@@ -76,6 +81,23 @@ def _request_with_retry(
                 raise ScraperError(url, last_status or 0, attempt) from exc
 
     raise ScraperError(url, last_status, MAX_RETRIES)
+
+
+def _pause_for_domain(url: str) -> None:
+    """Throttle consecutive requests to the same domain."""
+    domain = urlparse(url).netloc.lower()
+    if not domain:
+        return
+
+    with _domain_lock:
+        now = time.monotonic()
+        last_request = _domain_last_request.get(domain)
+        if last_request is not None:
+            wait = DOMAIN_DELAY_SECONDS - (now - last_request)
+            if wait > 0:
+                logger.debug("Waiting %.2fs before next request to %s", wait, domain)
+                time.sleep(wait)
+        _domain_last_request[domain] = time.monotonic()
 
 
 def fetch_html(url: str, timeout: float = 15.0) -> BeautifulSoup:
