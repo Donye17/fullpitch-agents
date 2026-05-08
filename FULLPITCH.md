@@ -300,7 +300,7 @@ fullpitch-agents/
 | `college-agent` | Every 2 hours | College scores + standings |
 | `wer-agent` | Hourly during WER season | Women's Elite Rugby scores + standings |
 | `world-rankings-agent` | Daily 8am UTC | World rankings |
-| `maintenance-agent` | Daily after all other agents | Audits articles and fills missing image, slug, summary, and source domain metadata |
+| `maintenance-agent` | Every cycle + daily 3am UTC full pass | Fast mode repairs recent articles; full mode audits all history |
 | `content-agent` | Triggered by other agents | Match reports, recaps |
 
 ### Gemini Model Constants
@@ -452,7 +452,7 @@ These must be copied to new project before deleting old folder:
 - **Step 21 (roadmap):** Program claim flow complete — `/claim/[teamId]` public page (viewable by anyone, submission requires Clerk sign-in) with form fields: name, role (Head Coach / Assistant Coach / Athletic Director / Team Manager / Other), email, optional verification message. Creates `Claim` record with `status="pending"`. Pre-fills name/email from Clerk if signed in. Prevents duplicate pending claims. Success/duplicate confirmation pages. `/teams/[id]` public team page showing team info, current standing, next match, recent results, roster; "Claim This Program" button appears only when team has no approved claim. `src/lib/claims.ts` provides standalone `approveClaim(claimId, adminClerkId)` and `rejectClaim(claimId, adminClerkId, reason?)` helpers. `npx tsc --noEmit` and `npm run build` pass.
 - **Agent source reliability fixes:** `FullpitchAPI` uses `httpx.Client(follow_redirects=True)` to handle 307s on all API reads/writes and has protected `PATCH /api/v1/articles/[id]` support for maintenance repairs. Direct `httpx.get` helpers also follow redirects. `tools/scraper.py` identifies outbound scrape requests with `User-Agent: Fullpitch/1.0 (fullpitch.app)`, pauses at least 2 seconds between consecutive requests to the same domain, provides `extract_og_image(url)`, and provides `gemini_summarize(url)` for article TLDR repair. `mlr_agent.py` uses no-`www` MLR URL fallback chains for scores/schedule/results/games and standings/table/league-table, logging the URL that succeeds. `wer_agent.py` uses the official WER domain `https://www.womenseliterugby.us` with `/2026-schedule` and `/standings` first, with older domains as fallbacks. `python -m compileall tools agents` passes.
 - **News image ingest/classification:** `news_agent.py` fetches the full article page for relevant web articles, extracts `<meta property="og:image">`, and sends it as `imageUrl` to `/api/v1/ingest/article`. League classification uses title/content rather than source domain; `eagles` is reserved for USA Eagles national-team articles only, while USA Rugby org updates classify as `general`.
-- **Maintenance agent:** `agents/maintenance_agent.py` runs after all other boss sub-agents and audits article metadata, filling missing `imageUrl`, `slug`, `summary`, and `sourceDomain` fields through the protected article PATCH endpoint. It regenerates missing or short summaries under 80 words using `gemini_summarize()`. It also repairs likely `eagles` misclassifications using title keywords first, then Gemini if unsure.
+- **Maintenance agent:** `agents/maintenance_agent.py` runs after all other boss sub-agents. Fast mode runs every cycle against articles created in the last 24 hours, repairing missing `imageUrl`, `slug`, `summary`, `sourceDomain`, and wrong `league` tags. Full mode runs only at 3 AM UTC, fetches all articles, applies the same repairs across history, and also regenerates summaries under 80 words using `gemini_summarize()`.
 
 ### ⚠️ In Progress
 - Saving remaining assets from old project (seeds, `videos-backup.json`) as needed
@@ -514,6 +514,7 @@ These must be copied to new project before deleting old folder:
 | May 2026 | News-agent league classification now uses title/content instead of source domain; USA Rugby org, coaching, policy, and referee education items classify as `general`, not `eagles`. |
 | May 2026 | Maintenance agent now reclassifies likely non-Eagles articles incorrectly tagged `eagles`, including college, high-school, and USA Rugby education/org updates, and patches corrected `league` values. |
 | May 2026 | Maintenance agent now regenerates article summaries shorter than 80 words with `gemini_summarize()` so legacy short snippets become 4-6 sentence TLDRs. |
+| May 2026 | Maintenance agent split into fast mode every cycle for last-24-hour articles and full mode at 3 AM UTC for all historical articles. |
 | May 2026 | Clerk — roles in `publicMetadata.role` (`admin` \| `program_rep` \| `user`); route gating in `clerkMiddleware` + `clerkClient.users.getUser`; webhooks via `verifyWebhook` + `CLERK_WEBHOOK_SIGNING_SECRET` |
 | Apr 2026 | Brand book and homepage mockup finalized |
 

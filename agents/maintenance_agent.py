@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -108,18 +109,34 @@ def _classify_league_with_gemini(title: str, content: str, client) -> str | None
         return None
 
 
-def _correct_eagles_league(article: dict[str, Any], client) -> str | None:
-    if (article.get("league") or "").lower() != "eagles":
+def is_full_maintenance_window() -> bool:
+    """Return True during the daily 3 AM UTC full-maintenance window."""
+    return datetime.now(timezone.utc).hour == 3
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
         return None
 
+
+def _correct_league(article: dict[str, Any], client) -> str | None:
+    current_league = (article.get("league") or "").lower()
     title = article.get("title") or ""
     keyword_league = _keyword_league(title)
-    if keyword_league:
+    if keyword_league and keyword_league != current_league:
         return keyword_league
 
     content = article.get("summary") or article.get("content") or ""
     gemini_league = _classify_league_with_gemini(title, content, client)
-    if gemini_league and gemini_league != "eagles":
+    if gemini_league and gemini_league != current_league:
         return gemini_league
 
     return None
@@ -147,13 +164,31 @@ def _all_articles(api: FullpitchAPI) -> list[dict[str, Any]]:
     return articles
 
 
-def _repair_article(article: dict[str, Any], api: FullpitchAPI, genai_client) -> dict[str, int]:
+def _recent_articles(api: FullpitchAPI) -> list[dict[str, Any]]:
+    envelope = api.get_articles(limit=ARTICLE_LIMIT, page=1)
+    articles = envelope.get("data", [])
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    return [
+        article
+        for article in articles
+        if (created_at := _parse_datetime(article.get("createdAt"))) is not None
+        and created_at >= cutoff
+    ]
+
+
+def _repair_article(
+    article: dict[str, Any],
+    api: FullpitchAPI,
+    genai_client,
+    mode_label: str,
+    repair_short_summary: bool,
+) -> dict[str, int]:
     title = article.get("title") or "Untitled"
     source_url = article.get("sourceUrl") or article.get("url") or ""
     updates: dict[str, str] = {}
     attempted: set[str] = set()
 
-    corrected_league = _correct_eagles_league(article, genai_client)
+    corrected_league = _correct_league(article, genai_client)
     if corrected_league:
         attempted.add("league")
         updates["league"] = corrected_league
@@ -170,7 +205,12 @@ def _repair_article(article: dict[str, Any], api: FullpitchAPI, genai_client) ->
         if slug:
             updates["slug"] = slug
 
-    if _needs_summary_repair(article.get("summary")) and source_url:
+    summary_needs_repair = (
+        _needs_summary_repair(article.get("summary"))
+        if repair_short_summary
+        else _is_missing(article.get("summary"))
+    )
+    if summary_needs_repair and source_url:
         attempted.add("summary")
         summary = gemini_summarize(source_url)
         if summary:
@@ -183,37 +223,41 @@ def _repair_article(article: dict[str, Any], api: FullpitchAPI, genai_client) ->
             updates["sourceDomain"] = source_domain
 
     if not updates:
-        logger.info("Complete: %s", title)
+        logger.info("%s maintenance: complete %s", mode_label, title)
         return {"fixed": 0, "attempted": len(attempted)}
 
     api.update_article(article["id"], updates)
     for field in updates:
-        logger.info("Fixed %s: %s", field, title)
+        logger.info("%s maintenance: fixed %s for %s", mode_label, field, title)
 
     return {"fixed": len(updates), "attempted": len(attempted)}
 
 
-def run_maintenance_agent() -> dict[str, Any]:
-    """Audit every article and fill missing metadata where possible."""
-    api = FullpitchAPI()
-    genai_client = _get_genai_client()
+def _run_mode(
+    *,
+    mode_label: str,
+    articles: list[dict[str, Any]],
+    api: FullpitchAPI,
+    genai_client,
+    repair_short_summary: bool,
+) -> dict[str, Any]:
     summary: dict[str, Any] = {
+        "mode": mode_label.lower(),
         "articles_checked": 0,
         "fields_fixed": 0,
         "fields_attempted": 0,
         "errors": [],
     }
 
-    try:
-        articles = _all_articles(api)
-    except FullpitchAPIError as exc:
-        logger.error("Failed to fetch articles for maintenance: %s", exc)
-        summary["errors"].append(str(exc))
-        return summary
-
     for article in articles:
         try:
-            result = _repair_article(article, api, genai_client)
+            result = _repair_article(
+                article,
+                api,
+                genai_client,
+                mode_label,
+                repair_short_summary,
+            )
             summary["articles_checked"] += 1
             summary["fields_fixed"] += result["fixed"]
             summary["fields_attempted"] += result["attempted"]
@@ -224,8 +268,49 @@ def run_maintenance_agent() -> dict[str, Any]:
 
         time.sleep(REQUEST_DELAY_SECONDS)
 
-    logger.info("Maintenance summary: %s", summary)
+    logger.info("%s maintenance summary: %s", mode_label, summary)
     return summary
+
+
+def run_maintenance_agent() -> dict[str, Any]:
+    """Run fast maintenance every cycle and full maintenance at 3 AM UTC."""
+    api = FullpitchAPI()
+    genai_client = _get_genai_client()
+    result: dict[str, Any] = {"fast": None, "full": None}
+
+    try:
+        fast_articles = _recent_articles(api)
+    except FullpitchAPIError as exc:
+        logger.error("Failed to fetch recent articles for fast maintenance: %s", exc)
+        result["fast"] = {"errors": [str(exc)]}
+    else:
+        result["fast"] = _run_mode(
+            mode_label="Fast",
+            articles=fast_articles,
+            api=api,
+            genai_client=genai_client,
+            repair_short_summary=False,
+        )
+
+    if is_full_maintenance_window():
+        try:
+            full_articles = _all_articles(api)
+        except FullpitchAPIError as exc:
+            logger.error("Failed to fetch all articles for full maintenance: %s", exc)
+            result["full"] = {"errors": [str(exc)]}
+        else:
+            result["full"] = _run_mode(
+                mode_label="Full",
+                articles=full_articles,
+                api=api,
+                genai_client=genai_client,
+                repair_short_summary=True,
+            )
+    else:
+        logger.info("Full maintenance skipped: outside 3 AM UTC window")
+
+    logger.info("Maintenance summary: %s", result)
+    return result
 
 
 def run() -> None:
