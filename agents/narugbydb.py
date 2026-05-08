@@ -7,6 +7,7 @@ import re
 import time
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
@@ -47,6 +48,21 @@ TEAM_ALIASES = {
     "twin cities gemini": "TC Gemini",
 }
 
+TEAM_SLUG_ALIASES = {
+    "anthem-rc": "Anthem RC",
+    "bay-breakers": "Bay Breakers",
+    "boston-banshees": "Boston Banshees",
+    "california-legion": "California Legion",
+    "chicago-hounds": "Chicago Hounds",
+    "chicago-tempest": "Chicago Tempest",
+    "denver-onyx": "Denver Onyx",
+    "new-england-free-jacks": "New England Free Jacks",
+    "new-york-exiles": "New York Exiles",
+    "old-glory-dc": "Old Glory DC",
+    "seattle-seawolves": "Seattle Seawolves",
+    "twin-cities-gemini": "TC Gemini",
+}
+
 
 def fetch_narugbydb_html(url: str) -> BeautifulSoup:
     """Fetch an NA Rugby DB page and leave a polite post-request delay."""
@@ -58,6 +74,18 @@ def fetch_narugbydb_html(url: str) -> BeautifulSoup:
 def normalize_team_name(name: str) -> str:
     compact = re.sub(r"\s+", " ", name.replace("\xa0", " ").strip())
     return TEAM_ALIASES.get(compact.lower(), compact)
+
+
+def _team_name_from_url(url: str) -> str | None:
+    path_parts = [part for part in urlparse(url).path.split("/") if part]
+    if len(path_parts) < 2 or path_parts[-2] != "team":
+        return None
+
+    slug = path_parts[-1].lower()
+    if slug in TEAM_SLUG_ALIASES:
+        return TEAM_SLUG_ALIASES[slug]
+
+    return normalize_team_name(slug.replace("-", " ").title())
 
 
 def resolve_team(api: FullpitchAPI, name: str) -> dict[str, Any] | None:
@@ -171,6 +199,21 @@ def _parse_event_title(title: str) -> tuple[str, str] | None:
     return normalize_team_name(home_name), normalize_team_name(away_name)
 
 
+def _parse_event_teams(row) -> tuple[str, str] | None:
+    """Extract the left/right team links from an NA Rugby DB event row."""
+    team_links = row.select('a[href*="/team/"]')
+    if len(team_links) >= 2:
+        home_name = _team_name_from_url(team_links[0].get("href", ""))
+        away_name = _team_name_from_url(team_links[1].get("href", ""))
+        if home_name and away_name:
+            return home_name, away_name
+
+    title_el = row.select_one(".sp-event-title")
+    if not title_el:
+        return None
+    return _parse_event_title(title_el.get_text(" ", strip=True))
+
+
 def _parse_match_datetime(date_text: str, result_text: str) -> str:
     date_text = date_text.strip()
     time_text = result_text.strip() if re.search(r"\b(am|pm)\b", result_text, flags=re.IGNORECASE) else ""
@@ -199,8 +242,7 @@ def parse_fixtures_page(soup: BeautifulSoup) -> list[dict[str, Any]]:
             if not date_el or not result_el or not title_el:
                 continue
 
-            title = title_el.get_text(" ", strip=True)
-            teams = _parse_event_title(title)
+            teams = _parse_event_teams(row)
             if teams is None:
                 continue
 

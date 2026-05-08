@@ -8,11 +8,18 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+def _lookup_key(value: str | None) -> str:
+    if not value:
+        return ""
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
 
 class FullpitchAPIError(Exception):
@@ -96,9 +103,23 @@ class FullpitchAPI:
                     return None
                 raise
         if name:
-            envelope = self._get("teams", {"name": name, "limit": 1})
+            # The public teams endpoint does not currently implement a name filter,
+            # so fetch a bounded list and match locally instead of accepting item 0.
+            envelope = self._get("teams", {"limit": 200})
             items = envelope.get("data", [])
-            return items[0] if items else None
+            needle = _lookup_key(name)
+
+            for item in items:
+                values = [
+                    item.get("name"),
+                    item.get("shortName"),
+                    item.get("abbreviation"),
+                    item.get("slug"),
+                ]
+                if any(_lookup_key(value) == needle for value in values):
+                    return item
+
+            return None
         return None
 
     def get_player(
