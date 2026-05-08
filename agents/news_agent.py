@@ -30,17 +30,17 @@ GEMINI_WRITING_MID = "gemini-2.5-flash"
 MAX_AGE_DAYS = 7
 
 WEB_SOURCES: list[dict[str, Any]] = [
-    {"url": "https://www.majorleague.rugby/news", "league": "mlr"},
-    {"url": "https://www.usa.rugby/news", "league": "eagles"},
+    {"url": "https://www.majorleague.rugby/news"},
+    {"url": "https://www.usa.rugby/news"},
     {"url": "https://www.rugbypass.com/news", "filter": True},
     {"url": "https://www.ultimaterugby.com", "filter": True},
 ]
 
 REDDIT_SOURCES: list[dict[str, Any]] = [
-    {"subreddit": "MLRugby", "league": "mlr"},
-    {"subreddit": "usarugby", "league": "eagles"},
+    {"subreddit": "MLRugby"},
+    {"subreddit": "usarugby"},
     {"subreddit": "rugbyunion", "filter": True},
-    {"subreddit": "collegiaterugby", "league": "craa-d1a"},
+    {"subreddit": "collegiaterugby"},
 ]
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -304,7 +304,9 @@ def run_news_agent() -> dict[str, Any]:
             )
 
             published_at = (pub_date or datetime.now(timezone.utc)).isoformat()
-            article_league = league or _classify_league(art["title"], genai_client)
+            article_league = league or _classify_league(
+                art["title"], art.get("snippet", ""), genai_client
+            )
             image_url = extract_og_image(article_url)
 
             try:
@@ -370,7 +372,7 @@ def run_news_agent() -> dict[str, Any]:
                 title, selftext, f"reddit/r/{subreddit}", genai_client
             )
 
-            article_league = league or _classify_league(title, genai_client)
+            article_league = league or _classify_league(title, selftext, genai_client)
 
             try:
                 api.create_article({
@@ -407,7 +409,7 @@ def run_news_agent() -> dict[str, Any]:
     return summary
 
 
-def _classify_league(title: str, client) -> str:
+def _classify_league(title: str, content: str, client) -> str:
     """Attempt to classify which league an article belongs to via Gemini."""
     if client is None:
         return "general"
@@ -415,14 +417,27 @@ def _classify_league(title: str, client) -> str:
         resp = client.models.generate_content(
             model=GEMINI_REASONING,
             contents=(
-                "Classify this rugby article into one league category. "
-                "Options: mlr, eagles, craa-d1a, club, high-school, general. "
-                f"Title: '{title}'. "
+                "Classify this rugby article into exactly one league category based on the "
+                "article title and content, not the source domain. Source domain alone does "
+                "not determine league.\n\n"
+                "Categories:\n"
+                "- mlr: Major League Rugby, MLR teams or MLR players.\n"
+                "- wer: Women's Elite Rugby, WER teams or WER players.\n"
+                "- college: CRAA, NCR, collegiate rugby, sevens nationals, college programs, "
+                "or student athletes.\n"
+                "- eagles: USA Eagles national team ONLY, men's or women's national team "
+                "competing internationally.\n"
+                "- club: club rugby or territorial unions.\n"
+                "- high-school: high school rugby programs.\n"
+                "- general: USA Rugby organization news, coaching certifications, policy "
+                "updates, referee education, or anything that does not fit the categories above.\n\n"
+                f"Title: {title}\n"
+                f"Content: {content[:1200]}\n\n"
                 "Reply with ONLY the category name, nothing else."
             ),
         )
         category = resp.text.strip().lower()
-        valid = {"mlr", "eagles", "craa-d1a", "club", "high-school", "general"}
+        valid = {"mlr", "wer", "college", "eagles", "club", "high-school", "general"}
         return category if category in valid else "general"
     except Exception:
         logger.exception("Gemini league classification failed")
