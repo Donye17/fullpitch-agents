@@ -16,7 +16,13 @@ from typing import Any
 from urllib.parse import urlparse
 
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
-from tools.scraper import extract_og_image, gemini_summarize
+from tools.scraper import (
+    ScraperError,
+    extract_og_image,
+    extract_publish_date,
+    fetch_text,
+    gemini_summarize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +204,16 @@ def _repair_article(
         image_url = extract_og_image(source_url)
         if image_url:
             updates["imageUrl"] = image_url
+
+    if mode_label == "Fast" and _is_missing(article.get("publishedDate")) and source_url:
+        attempted.add("publishedDate")
+        try:
+            published_date = extract_publish_date(fetch_text(source_url))
+        except ScraperError as exc:
+            logger.warning("Failed to fetch publish date from %s: %s", source_url, exc)
+            published_date = None
+        if published_date:
+            updates["publishedDate"] = published_date
 
     if _is_missing(article.get("slug")) and title:
         attempted.add("slug")

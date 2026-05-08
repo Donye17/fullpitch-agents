@@ -18,7 +18,13 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
-from tools.scraper import ScraperError, fetch_html
+from tools.scraper import (
+    ScraperError,
+    extract_og_image_from_html,
+    extract_publish_date,
+    fetch_html,
+    fetch_text,
+)
 from tools.search import fetch_subreddit_new, rate_limit_reddit
 from tools.text_utils import clean_text
 
@@ -107,19 +113,6 @@ def _cutoff_date() -> datetime:
 
 def _domain(url: str) -> str:
     return urlparse(url).hostname or url
-
-
-def extract_og_image(url: str) -> str | None:
-    """Fetch a full article page and return its og:image URL, if present."""
-    try:
-        soup = fetch_html(url)
-    except ScraperError as exc:
-        logger.warning("Failed to fetch article image from %s: %s", url, exc)
-        return None
-
-    tag = soup.select_one('meta[property="og:image"], meta[name="og:image"]')
-    image_url = tag.get("content", "").strip() if tag else ""
-    return urljoin(url, image_url) if image_url else None
 
 
 # ── HTML parsing helpers ──────────────────────────────────────────────────────
@@ -303,18 +296,24 @@ def run_news_agent() -> dict[str, Any]:
                 art["title"], art.get("snippet", ""), _domain(url), genai_client
             )
 
-            published_at = (pub_date or datetime.now(timezone.utc)).isoformat()
             article_league = league or _classify_league(
                 art["title"], art.get("snippet", ""), genai_client
             )
-            image_url = extract_og_image(article_url)
+            image_url = None
+            published_date = None
+            try:
+                article_html = fetch_text(article_url)
+                image_url = extract_og_image_from_html(article_html, article_url)
+                published_date = extract_publish_date(article_html)
+            except ScraperError as exc:
+                logger.warning("Failed to fetch article metadata from %s: %s", article_url, exc)
 
             try:
                 api.create_article({
                     "title": art["title"],
                     "url": article_url,
                     "source": _domain(url),
-                    "publishedAt": published_at,
+                    "publishedDate": published_date,
                     "league": article_league,
                     "summary": article_summary,
                     "content": art.get("snippet"),
@@ -379,7 +378,7 @@ def run_news_agent() -> dict[str, Any]:
                     "title": title,
                     "url": reddit_url,
                     "source": "reddit",
-                    "publishedAt": post_date.isoformat(),
+                    "publishedDate": post_date.isoformat(),
                     "league": article_league,
                     "summary": article_summary,
                     "content": selftext if selftext else None,

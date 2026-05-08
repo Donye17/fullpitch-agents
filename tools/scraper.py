@@ -6,10 +6,12 @@ Exponential backoff on 429/503 (up to 3 retries: 2s, 4s, 8s).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from urllib.parse import urljoin
 from urllib.parse import urlparse
 
@@ -115,6 +117,12 @@ def fetch_html(url: str, timeout: float = 15.0) -> BeautifulSoup:
     return BeautifulSoup(resp.text, "html.parser")
 
 
+def fetch_text(url: str, timeout: float = 15.0) -> str:
+    """Fetch a URL and return raw response text."""
+    resp = _request_with_retry(url, timeout=timeout)
+    return resp.text
+
+
 def fetch_json(
     url: str,
     headers: dict[str, str] | None = None,
@@ -129,17 +137,110 @@ def fetch_json(
     return resp.json()
 
 
+def extract_og_image_from_html(html: str, page_url: str) -> str | None:
+    """Return an og:image URL from already-fetched HTML, if present."""
+    soup = BeautifulSoup(html, "html.parser")
+    tag = soup.select_one('meta[property="og:image"], meta[name="og:image"]')
+    image_url = tag.get("content", "").strip() if tag else ""
+    return urljoin(page_url, image_url) if image_url else None
+
+
 def extract_og_image(url: str) -> str | None:
     """Fetch a page and return its og:image URL, if present."""
     try:
-        soup = fetch_html(url)
+        html = fetch_text(url)
     except ScraperError as exc:
         logger.warning("Failed to fetch og:image from %s: %s", url, exc)
         return None
 
-    tag = soup.select_one('meta[property="og:image"], meta[name="og:image"]')
-    image_url = tag.get("content", "").strip() if tag else ""
-    return urljoin(url, image_url) if image_url else None
+    return extract_og_image_from_html(html, url)
+
+
+def _parse_publish_date(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    except ValueError:
+        pass
+
+    for fmt in (
+        "%Y-%m-%d",
+        "%B %d, %Y",
+        "%b %d, %Y",
+        "%m/%d/%Y",
+        "%d %B %Y",
+        "%d %b %Y",
+    ):
+        try:
+            parsed = datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+            return parsed.isoformat()
+        except ValueError:
+            continue
+
+    return None
+
+
+def _jsonld_date_published(value) -> str | None:
+    if isinstance(value, dict):
+        date_value = value.get("datePublished")
+        if isinstance(date_value, str):
+            parsed = _parse_publish_date(date_value)
+            if parsed:
+                return parsed
+        for child in value.values():
+            parsed = _jsonld_date_published(child)
+            if parsed:
+                return parsed
+    elif isinstance(value, list):
+        for item in value:
+            parsed = _jsonld_date_published(item)
+            if parsed:
+                return parsed
+    return None
+
+
+def extract_publish_date(html: str) -> str | None:
+    """Return an original source publish date from raw HTML, or None."""
+    soup = BeautifulSoup(html, "html.parser")
+
+    selectors = (
+        'meta[property="article:published_time"]',
+        'meta[name="publishdate"]',
+    )
+    for selector in selectors:
+        tag = soup.select_one(selector)
+        parsed = _parse_publish_date(tag.get("content", "") if tag else None)
+        if parsed:
+            return parsed
+
+    time_tag = soup.select_one("time[datetime]")
+    parsed = _parse_publish_date(time_tag.get("datetime", "") if time_tag else None)
+    if parsed:
+        return parsed
+
+    for script in soup.select('script[type="application/ld+json"]'):
+        raw = script.string or script.get_text(strip=True)
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        parsed = _jsonld_date_published(data)
+        if parsed:
+            return parsed
+
+    return None
 
 
 def _get_genai_client():
