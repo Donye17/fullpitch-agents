@@ -109,6 +109,19 @@ def _domain(url: str) -> str:
     return urlparse(url).hostname or url
 
 
+def extract_og_image(url: str) -> str | None:
+    """Fetch a full article page and return its og:image URL, if present."""
+    try:
+        soup = fetch_html(url)
+    except ScraperError as exc:
+        logger.warning("Failed to fetch article image from %s: %s", url, exc)
+        return None
+
+    tag = soup.select_one('meta[property="og:image"], meta[name="og:image"]')
+    image_url = tag.get("content", "").strip() if tag else ""
+    return urljoin(url, image_url) if image_url else None
+
+
 # ── HTML parsing helpers ──────────────────────────────────────────────────────
 
 
@@ -292,6 +305,7 @@ def run_news_agent() -> dict[str, Any]:
 
             published_at = (pub_date or datetime.now(timezone.utc)).isoformat()
             article_league = league or _classify_league(art["title"], genai_client)
+            image_url = extract_og_image(article_url)
 
             try:
                 api.create_article({
@@ -302,6 +316,7 @@ def run_news_agent() -> dict[str, Any]:
                     "league": article_league,
                     "summary": article_summary,
                     "content": art.get("snippet"),
+                    "imageUrl": image_url,
                     "agentName": "news-agent",
                     "tags": [article_league] if article_league else [],
                 })
