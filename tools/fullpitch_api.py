@@ -63,6 +63,14 @@ class FullpitchAPI:
             raise FullpitchAPIError("POST", f"{self.base_url}{url}", resp.status_code, resp.text[:500])
         return resp.json()
 
+    def _patch(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
+        url = f"/api/v1/{path}"
+        logger.info("PATCH %s%s", self.base_url, url)
+        resp = self._client.patch(url, json=data, headers=self._auth_headers())
+        if resp.status_code != 200:
+            raise FullpitchAPIError("PATCH", f"{self.base_url}{url}", resp.status_code, resp.text[:500])
+        return resp.json()
+
     # ── READ methods ──────────────────────────────────────────────────────
 
     def get_recent_matches(
@@ -128,6 +136,10 @@ class FullpitchAPI:
         envelope = self._get("articles", {"limit": limit})
         return envelope.get("data", [])
 
+    def get_articles(self, limit: int = 200, page: int = 1) -> dict[str, Any]:
+        """GET /api/v1/articles — article envelope with pagination metadata."""
+        return self._get("articles", {"limit": limit, "page": page})
+
     def get_recent_videos(self, limit: int = 20) -> list[dict[str, Any]]:
         """GET /api/v1/videos — most recent videos."""
         envelope = self._get("videos", {"limit": limit})
@@ -149,6 +161,11 @@ class FullpitchAPI:
         """POST /api/v1/ingest/article — create article (skips duplicates by URL)."""
         logger.info("Creating article: %s", data.get("title", "?")[:80])
         return self._post("article", data)
+
+    def update_article(self, article_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """PATCH /api/v1/articles/[id] — protected partial article update."""
+        logger.info("Updating article %s: %s", article_id, ", ".join(data.keys()))
+        return self._patch(f"articles/{article_id}", data)
 
     def create_video(self, data: dict[str, Any]) -> dict[str, Any]:
         """POST /api/v1/ingest/video — create video (skips duplicates by videoId)."""

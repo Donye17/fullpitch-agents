@@ -35,6 +35,7 @@ AGENT_MAP = {
     "eagles": "agents.eagles_agent",
     "college": "agents.college_agent",
     "content": "agents.content_agent",
+    "maintenance": "agents.maintenance_agent",
 }
 
 

@@ -10,6 +10,7 @@ Run order:
   5. eagles_agent      — USA Eagles results
   6. college_agent     — college scores + standings
   7. world_rankings_agent — World Rugby Rankings (USA position)
+  8. maintenance_agent — article metadata repair
 """
 
 import logging
@@ -25,6 +26,7 @@ AGENT_RUN_ORDER = [
     ("eagles", "agents.eagles_agent"),
     ("college", "agents.college_agent"),
     ("world-rankings", "agents.world_rankings_agent"),
+    ("maintenance", "agents.maintenance_agent"),
 ]
 
 

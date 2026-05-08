@@ -270,7 +270,8 @@ fullpitch-agents/
 │   ├── college_agent.py     ← college scores + standings
 │   ├── content_agent.py     ← AI content writer (reports, recaps)
 │   ├── wer_agent.py         ← Women's Elite Rugby scores + standings
-│   └── world_rankings_agent.py ← World Rugby Rankings (USA position)
+│   ├── world_rankings_agent.py ← World Rugby Rankings (USA position)
+│   └── maintenance_agent.py ← daily article metadata repair
 ├── tools/
 │   ├── fullpitch_api.py     ← REST API wrapper (read + write)
 │   ├── search.py            ← web search utility
@@ -299,6 +300,7 @@ fullpitch-agents/
 | `college-agent` | Every 2 hours | College scores + standings |
 | `wer-agent` | Hourly during WER season | Women's Elite Rugby scores + standings |
 | `world-rankings-agent` | Daily 8am UTC | World rankings |
+| `maintenance-agent` | Daily after all other agents | Audits articles and fills missing image, slug, summary, and source domain metadata |
 | `content-agent` | Triggered by other agents | Match reports, recaps |
 
 ### Gemini Model Constants
@@ -448,8 +450,9 @@ These must be copied to new project before deleting old folder:
 - **Step 19 (roadmap):** Admin agent log viewer complete — `/admin/agents` shows paginated `AgentLog` runs with agent-name/date filters, derived finished time, ingested/skipped/error counts, expandable JSON/error details, and unresolved `DataConflict` rows using the existing moderation resolution actions. `npx tsc --noEmit` and `npm run build` pass.
 - **Step 20 (roadmap):** Program rep dashboard complete — `src/app/dashboard/layout.tsx` guards with `requireProgramRep()`, looks up `User.programId` for team linkage, renders responsive sidebar (Overview, Roster, Results, Schedule, Team Info). Pages: `/dashboard` (overview with W/D/L, last 5 results, next match, roster count), `/dashboard/roster` (player list with add/edit/remove, uses Player model fields: canonicalName, firstName, lastName, position), `/dashboard/results` (submit completed match results with opponent select, home/away, scores; source="program_rep"), `/dashboard/schedule` (add upcoming games with opponent, date, location; status=SCHEDULED), `/dashboard/team` (edit team profile fields: name, shortName, abbreviation, headCoach, city, state, stadium, stadiumCapacity, logoUrl, colors, website, social handles, description; read-only competition/gender/format/level). All actions verify team ownership via `programId`. Raw SQL for Team updates to avoid Prisma enum issues. `npx tsc --noEmit` and `npm run build` pass.
 - **Step 21 (roadmap):** Program claim flow complete — `/claim/[teamId]` public page (viewable by anyone, submission requires Clerk sign-in) with form fields: name, role (Head Coach / Assistant Coach / Athletic Director / Team Manager / Other), email, optional verification message. Creates `Claim` record with `status="pending"`. Pre-fills name/email from Clerk if signed in. Prevents duplicate pending claims. Success/duplicate confirmation pages. `/teams/[id]` public team page showing team info, current standing, next match, recent results, roster; "Claim This Program" button appears only when team has no approved claim. `src/lib/claims.ts` provides standalone `approveClaim(claimId, adminClerkId)` and `rejectClaim(claimId, adminClerkId, reason?)` helpers. `npx tsc --noEmit` and `npm run build` pass.
-- **Agent source reliability fixes:** `FullpitchAPI` uses `httpx.Client(follow_redirects=True)` to handle 307s on all API reads/writes. Direct `httpx.get` helpers also follow redirects. `tools/scraper.py` identifies outbound scrape requests with `User-Agent: Fullpitch/1.0 (fullpitch.app)` and pauses at least 2 seconds between consecutive requests to the same domain. `mlr_agent.py` uses no-`www` MLR URL fallback chains for scores/schedule/results/games and standings/table/league-table, logging the URL that succeeds. `wer_agent.py` uses the official WER domain `https://www.womenseliterugby.us` with `/2026-schedule` and `/standings` first, with older domains as fallbacks. `python -m compileall tools agents` passes.
+- **Agent source reliability fixes:** `FullpitchAPI` uses `httpx.Client(follow_redirects=True)` to handle 307s on all API reads/writes and has protected `PATCH /api/v1/articles/[id]` support for maintenance repairs. Direct `httpx.get` helpers also follow redirects. `tools/scraper.py` identifies outbound scrape requests with `User-Agent: Fullpitch/1.0 (fullpitch.app)`, pauses at least 2 seconds between consecutive requests to the same domain, provides `extract_og_image(url)`, and provides `gemini_summarize(url)` for article TLDR repair. `mlr_agent.py` uses no-`www` MLR URL fallback chains for scores/schedule/results/games and standings/table/league-table, logging the URL that succeeds. `wer_agent.py` uses the official WER domain `https://www.womenseliterugby.us` with `/2026-schedule` and `/standings` first, with older domains as fallbacks. `python -m compileall tools agents` passes.
 - **News image ingest:** `news_agent.py` fetches the full article page for relevant web articles, extracts `<meta property="og:image">`, and sends it as `imageUrl` to `/api/v1/ingest/article`.
+- **Maintenance agent:** `agents/maintenance_agent.py` runs after all other boss sub-agents and audits article metadata, filling missing `imageUrl`, `slug`, `summary`, and `sourceDomain` fields through the protected article PATCH endpoint.
 
 ### ⚠️ In Progress
 - Saving remaining assets from old project (seeds, `videos-backup.json`) as needed
@@ -507,6 +510,7 @@ These must be copied to new project before deleting old folder:
 | May 2026 | Agent reasoning model switched to `gemini-2.5-flash` because the lower-quota lite model is too constrained for video/news classification volume. MLR sources moved to `majorleague.rugby`; CRAA sources moved off the dead RugbyAffinity subdomain. |
 | May 2026 | News agent now extracts full-page `og:image` metadata for relevant web articles and includes it as `imageUrl` during article ingest. |
 | May 2026 | Scraper requests now use `User-Agent: Fullpitch/1.0 (fullpitch.app)` and throttle repeated requests to the same domain by at least 2 seconds. |
+| May 2026 | Maintenance agent added as the final boss sub-agent; it audits articles daily and repairs missing image, slug, summary, and source-domain metadata via protected article PATCH calls. |
 | May 2026 | Clerk — roles in `publicMetadata.role` (`admin` \| `program_rep` \| `user`); route gating in `clerkMiddleware` + `clerkClient.users.getUser`; webhooks via `verifyWebhook` + `CLERK_WEBHOOK_SIGNING_SECRET` |
 | Apr 2026 | Brand book and homepage mockup finalized |
 
