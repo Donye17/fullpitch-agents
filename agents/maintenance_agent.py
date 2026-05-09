@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 ARTICLE_LIMIT = 200
 REQUEST_DELAY_SECONDS = 1
+FAST_MAINTENANCE_HOURS = 48
 GEMINI_REASONING = "gemini-2.5-flash"
 MIN_SUMMARY_WORDS = 150
 JUNK_TITLES = {
@@ -191,13 +192,17 @@ def _all_articles(api: FullpitchAPI) -> list[dict[str, Any]]:
 def _recent_articles(api: FullpitchAPI) -> list[dict[str, Any]]:
     envelope = api.get_articles(limit=ARTICLE_LIMIT, page=1)
     articles = envelope.get("data", [])
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    return [
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=FAST_MAINTENANCE_HOURS)
+    recent_articles = [
         article
         for article in articles
         if (created_at := _parse_datetime(article.get("createdAt"))) is not None
         and created_at >= cutoff
     ]
+    return sorted(
+        recent_articles,
+        key=lambda article: 0 if _is_missing(article.get("imageUrl")) else 1,
+    )
 
 
 def _repair_article(

@@ -24,6 +24,7 @@ from tools.article_filter import (
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import (
     ScraperError,
+    extract_og_image,
     extract_og_image_from_html,
     extract_page_text_from_html,
     extract_publish_date,
@@ -302,6 +303,9 @@ def run_news_agent() -> dict[str, Any]:
                 article_text = extract_page_text_from_html(article_html) or article_text
             except ScraperError as exc:
                 logger.warning("Failed to fetch article metadata from %s: %s", article_url, exc)
+
+            if not image_url:
+                image_url = extract_og_image(article_url)
 
             if not has_minimum_content(article_text, min_chars=100):
                 logger.info("Skipping article with too little extracted content: %s", art["title"][:80])
