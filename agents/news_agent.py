@@ -1,8 +1,7 @@
-"""News Agent — article ingest with US rugby relevance filter.
+"""News Agent — official article ingest with US rugby relevance filter.
 
 Schedule: Hourly.
-Sources: majorleague.rugby/news, usa.rugby/news, rugbypass.com, ultimaterugby.com,
-         Reddit (r/MLRugby, r/usarugby, r/rugbyunion, r/collegiaterugby).
+Sources: majorleague.rugby/news, usa.rugby/news, rugbypass.com, ultimaterugby.com.
 Writes to: /api/v1/ingest/article
 """
 
@@ -10,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
-import time
+import html as html_lib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -32,7 +31,6 @@ from tools.scraper import (
     fetch_text,
     gemini_summarize,
 )
-from tools.search import fetch_subreddit_new, rate_limit_reddit
 from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
@@ -47,13 +45,6 @@ WEB_SOURCES: list[dict[str, Any]] = [
     {"url": "https://www.usa.rugby/news"},
     {"url": "https://www.rugbypass.com/news", "filter": True},
     {"url": "https://www.ultimaterugby.com", "filter": True},
-]
-
-REDDIT_SOURCES: list[dict[str, Any]] = [
-    {"subreddit": "MLRugby"},
-    {"subreddit": "usarugby"},
-    {"subreddit": "rugbyunion", "filter": True},
-    {"subreddit": "collegiaterugby"},
 ]
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -122,6 +113,10 @@ def _domain(url: str) -> str:
     return urlparse(url).hostname or url
 
 
+def _clean_entity_text(value: str | None) -> str:
+    return clean_text(html_lib.unescape(value or ""))
+
+
 # ── HTML parsing helpers ──────────────────────────────────────────────────────
 
 
@@ -161,11 +156,11 @@ def _extract_articles_from_html(soup, base_url: str) -> list[dict[str, Any]]:
             continue
         seen_urls.add(full_url)
 
-        title = tag.get_text(strip=True)
+        title = _clean_entity_text(tag.get_text(" ", strip=True))
         if not title or len(title) < 10:
             heading = tag.select_one("h1, h2, h3, h4, .title, .headline")
             if heading:
-                title = heading.get_text(strip=True)
+                title = _clean_entity_text(heading.get_text(" ", strip=True))
         if not title or len(title) < 10:
             continue
         if not is_viable_article_candidate(title=title, url=full_url):
@@ -179,7 +174,7 @@ def _extract_articles_from_html(soup, base_url: str) -> list[dict[str, Any]]:
         snippet = ""
         desc_el = tag.find_parent().select_one("p, .summary, .excerpt, [class*='desc']") if tag.find_parent() else None
         if desc_el:
-            snippet = desc_el.get_text(strip=True)[:500]
+            snippet = _clean_entity_text(desc_el.get_text(" ", strip=True))[:500]
 
         articles.append({
             "title": title,
@@ -245,14 +240,13 @@ def _parse_date(text: str) -> datetime | None:
 
 
 def run_news_agent() -> dict[str, Any]:
-    """Run the news agent: scrape web + Reddit, filter, summarize, ingest."""
+    """Run the news agent: scrape official web sources, filter, summarize, ingest."""
     api = FullpitchAPI()
     genai_client = _get_genai_client()
     cutoff = _cutoff_date()
 
     summary: dict[str, Any] = {
         "web_found": 0,
-        "reddit_found": 0,
         "skipped_duplicate": 0,
         "skipped_irrelevant": 0,
         "written": 0,
@@ -322,6 +316,7 @@ def run_news_agent() -> dict[str, Any]:
             article_summary = gemini_summarize(article_url, article_text) or _generate_summary(
                 art["title"], article_text, _domain(url), genai_client
             )
+            article_summary = _clean_entity_text(article_summary)
 
             article_league = league or _classify_league(
                 art["title"], article_text, genai_client
@@ -329,7 +324,7 @@ def run_news_agent() -> dict[str, Any]:
 
             try:
                 api.create_article({
-                    "title": art["title"],
+                    "title": _clean_entity_text(art["title"]),
                     "url": article_url,
                     "source": _domain(url),
                     "publishedDate": published_date,
@@ -347,78 +342,11 @@ def run_news_agent() -> dict[str, Any]:
                 logger.error(msg)
                 summary["errors"].append(msg)
 
-    # ── Reddit sources ────────────────────────────────────────────────────
-
-    for src in REDDIT_SOURCES:
-        subreddit = src["subreddit"]
-        league = src.get("league")
-        needs_filter = src.get("filter", False)
-
-        logger.info("Fetching r/%s", subreddit)
-        posts = fetch_subreddit_new(subreddit, limit=25)
-        summary["reddit_found"] += len(posts)
-
-        for post_wrapper in posts:
-            post = post_wrapper.get("data", {})
-            title = post.get("title", "").strip()
-            permalink = post.get("permalink", "")
-            created_utc = post.get("created_utc", 0)
-            selftext = post.get("selftext", "")[:500]
-
-            if not title or not permalink:
-                continue
-
-            reddit_url = f"https://www.reddit.com{permalink}"
-
-            if reddit_url in existing_urls:
-                summary["skipped_duplicate"] += 1
-                continue
-
-            if created_utc:
-                post_date = datetime.fromtimestamp(created_utc, tz=timezone.utc)
-                if post_date < cutoff:
-                    continue
-            else:
-                post_date = datetime.now(timezone.utc)
-
-            if needs_filter:
-                if not _is_us_rugby(title, genai_client):
-                    summary["skipped_irrelevant"] += 1
-                    continue
-
-            article_summary = _generate_summary(
-                title, selftext, f"reddit/r/{subreddit}", genai_client
-            )
-
-            article_league = league or _classify_league(title, selftext, genai_client)
-
-            try:
-                api.create_article({
-                    "title": title,
-                    "url": reddit_url,
-                    "source": "reddit",
-                    "publishedDate": post_date.isoformat(),
-                    "league": article_league,
-                    "summary": article_summary,
-                    "content": selftext if selftext else None,
-                    "agentName": "news-agent",
-                    "tags": [article_league] if article_league else [],
-                })
-                existing_urls.add(reddit_url)
-                summary["written"] += 1
-            except FullpitchAPIError as exc:
-                msg = f"Failed to ingest Reddit post '{title[:60]}': {exc}"
-                logger.error(msg)
-                summary["errors"].append(msg)
-
-        rate_limit_reddit()
-
     # ── Summary ───────────────────────────────────────────────────────────
 
     logger.info(
-        "News agent summary: web=%d reddit=%d written=%d dup=%d irrelevant=%d errors=%d",
+        "News agent summary: web=%d written=%d dup=%d irrelevant=%d errors=%d",
         summary["web_found"],
-        summary["reddit_found"],
         summary["written"],
         summary["skipped_duplicate"],
         summary["skipped_irrelevant"],

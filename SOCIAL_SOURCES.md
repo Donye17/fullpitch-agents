@@ -13,64 +13,17 @@
 | Instagram | Blocked | No useful API | — | Skip |
 | Facebook | Blocked | Very limited | — | Skip |
 | YouTube | ✅ Easy | YouTube Data API v3 | Free tier | ✅ Already planned |
-| Reddit | ✅ Easy | Free, no auth needed | Free | ✅ Add to news agent |
+| Reddit | Blocked/unreliable for bots | Free but fragile | Free | Skip |
 | LinkedIn | Blocked | Limited | — | Skip |
 
 ---
 
-## Reddit — Add to News Agent Now
+## Reddit — Do Not Scrape
 
-Reddit is the best free social source for US rugby. Active communities post
-match results, signings, injuries, and discussion in real time — often before
-official sites update.
-
-### Subreddits to Monitor
-
-| Subreddit | What's There |
-|-----------|-------------|
-| r/MLRugby | MLR match threads, results, news, signings |
-| r/rugbyunion | General rugby — filter for US content |
-| r/rugbyunion_chat | Discussion — filter for US content |
-| r/collegiaterugby | College rugby results and discussion |
-| r/usarugby | USA Eagles, national team news |
-
-### How to Hit the Reddit API (Free, No Auth)
-
-```python
-import httpx
-
-def fetch_subreddit_new(subreddit: str, limit: int = 25):
-    url = f"https://www.reddit.com/r/{subreddit}/new.json?limit={limit}"
-    headers = {"User-Agent": "FullpitchBot/1.0"}
-    response = httpx.get(url, headers=headers, timeout=15)
-    return response.json()["data"]["children"]
-
-def search_reddit(subreddit: str, query: str, limit: int = 10):
-    url = f"https://www.reddit.com/r/{subreddit}/search.json"
-    params = {"q": query, "sort": "new", "limit": limit, "restrict_sr": "true"}
-    headers = {"User-Agent": "FullpitchBot/1.0"}
-    response = httpx.get(url, params=params, headers=headers, timeout=15)
-    return response.json()["data"]["children"]
-```
-
-### What to Do With Reddit Posts
-
-1. Fetch new posts from each subreddit
-2. Use Gemini (GEMINI_REASONING) to classify:
-   "Is this post about a US rugby match result, signing,
-   injury, or significant news? YES or NO only."
-3. If YES → extract key info and write as Article:
-   - title = post title
-   - url = reddit post URL
-   - source = "reddit"
-   - league = classify from content
-4. Skip: memes, general discussion, non-US content, reposts
-
-### Rate Limiting
-
-Reddit allows ~60 requests/minute unauthenticated.
-Add 1 second delay between subreddit fetches.
-Always send User-Agent: FullpitchBot/1.0
+Do not ingest Reddit posts as news. Reddit blocks bots unpredictably and the
+content is community discussion, not official rugby news. `news_agent.py` should
+only ingest official/news-site article URLs that pass the shared article URL
+filter.
 
 ---
 
@@ -124,8 +77,6 @@ Build social_agent.py in Phase 2 when justified.
 
 | Source | Priority | Agent |
 |--------|---------|-------|
-| Reddit r/MLRugby, r/usarugby | ✅ Now | news_agent.py |
-| Reddit r/collegiaterugby | ✅ Now | college_agent.py |
 | YouTube | ✅ Already planned | video_agent.py |
 | Google Search grounding | ⚠️ Selectively | Any agent, sparingly |
 | X/Twitter API | ❌ Phase 2 | social_agent.py |
@@ -134,21 +85,14 @@ Build social_agent.py in Phase 2 when justified.
 
 ## Notes for news_agent.py
 
-Add Reddit alongside web sources:
+Use official article sources only:
 
 ```python
 SOURCES = [
-    # Web
     {"url": "majorleague.rugby/news", "type": "scrape", "league": "mlr"},
     {"url": "usa.rugby/news", "type": "scrape", "league": "eagles"},
     {"url": "rugbypass.com", "type": "scrape", "filter": True},
     {"url": "ultimaterugby.com", "type": "scrape", "filter": True},
-
-    # Reddit
-    {"subreddit": "MLRugby", "type": "reddit", "league": "mlr"},
-    {"subreddit": "usarugby", "type": "reddit", "league": "eagles"},
-    {"subreddit": "rugbyunion", "type": "reddit", "filter": True},
-    {"subreddit": "collegiaterugby", "type": "reddit", "league": "college"},
 ]
 ```
 

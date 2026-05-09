@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import time
+import html as html_lib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -30,6 +31,15 @@ ARTICLE_LIMIT = 200
 REQUEST_DELAY_SECONDS = 1
 GEMINI_REASONING = "gemini-2.5-flash"
 MIN_SUMMARY_WORDS = 150
+JUNK_TITLES = {
+    "create post",
+    "find a club",
+    "executive committee",
+    "community calendar",
+    "event sanctioning",
+    "find a program",
+    "youth & high school",
+}
 
 TITLE_LEAGUE_RULES = (
     (re.compile(r"\b(collegiate|college|craa|ncr|sevens nationals)\b", re.I), "college"),
@@ -57,6 +67,14 @@ def _word_count(value: str | None) -> int:
     if not value:
         return 0
     return len(re.findall(r"\b\w+\b", value))
+
+
+def _unescape_text(value: str | None) -> str:
+    return " ".join(html_lib.unescape(value or "").split())
+
+
+def _is_junk_title(value: str | None) -> bool:
+    return _unescape_text(value).lower() in JUNK_TITLES
 
 
 def _needs_summary_repair(value: Any) -> bool:
@@ -189,10 +207,20 @@ def _repair_article(
     mode_label: str,
     repair_short_summary: bool,
 ) -> dict[str, int]:
-    title = article.get("title") or "Untitled"
+    raw_title = article.get("title") or "Untitled"
+    title = _unescape_text(raw_title)
     source_url = article.get("sourceUrl") or article.get("url") or ""
     updates: dict[str, str] = {}
     attempted: set[str] = set()
+
+    if mode_label == "Fast" and _is_junk_title(raw_title):
+        api.delete_article(article["id"])
+        logger.info("%s maintenance: deleted junk article %s", mode_label, title)
+        return {"fixed": 0, "attempted": 1, "deleted": 1}
+
+    if title != raw_title:
+        attempted.add("title")
+        updates["title"] = title
 
     corrected_league = _correct_league(article, genai_client)
     if corrected_league:
@@ -240,13 +268,13 @@ def _repair_article(
 
     if not updates:
         logger.info("%s maintenance: complete %s", mode_label, title)
-        return {"fixed": 0, "attempted": len(attempted)}
+        return {"fixed": 0, "attempted": len(attempted), "deleted": 0}
 
     api.update_article(article["id"], updates)
     for field in updates:
         logger.info("%s maintenance: fixed %s for %s", mode_label, field, title)
 
-    return {"fixed": len(updates), "attempted": len(attempted)}
+    return {"fixed": len(updates), "attempted": len(attempted), "deleted": 0}
 
 
 def _run_mode(
@@ -262,6 +290,7 @@ def _run_mode(
         "articles_checked": 0,
         "fields_fixed": 0,
         "fields_attempted": 0,
+        "articles_deleted": 0,
         "errors": [],
     }
 
@@ -277,6 +306,7 @@ def _run_mode(
             summary["articles_checked"] += 1
             summary["fields_fixed"] += result["fixed"]
             summary["fields_attempted"] += result["attempted"]
+            summary["articles_deleted"] += result.get("deleted", 0)
         except Exception as exc:
             title = article.get("title") or article.get("id") or "unknown"
             logger.exception("Maintenance failed for %s", title)

@@ -78,6 +78,14 @@ class FullpitchAPI:
             raise FullpitchAPIError("PATCH", f"{self.base_url}{url}", resp.status_code, resp.text[:500])
         return resp.json()
 
+    def _delete(self, path: str) -> dict[str, Any]:
+        url = f"/api/v1/{path}"
+        logger.info("DELETE %s%s", self.base_url, url)
+        resp = self._client.delete(url, headers=self._auth_headers())
+        if resp.status_code != 200:
+            raise FullpitchAPIError("DELETE", f"{self.base_url}{url}", resp.status_code, resp.text[:500])
+        return resp.json()
+
     # ── READ methods ──────────────────────────────────────────────────────
 
     def get_recent_matches(
@@ -187,6 +195,11 @@ class FullpitchAPI:
         """PATCH /api/v1/articles/[id] — protected partial article update."""
         logger.info("Updating article %s: %s", article_id, ", ".join(data.keys()))
         return self._patch(f"articles/{article_id}", data)
+
+    def delete_article(self, article_id: str) -> dict[str, Any]:
+        """DELETE /api/v1/articles/[id] — protected article cleanup."""
+        logger.info("Deleting article %s", article_id)
+        return self._delete(f"articles/{article_id}")
 
     def create_video(self, data: dict[str, Any]) -> dict[str, Any]:
         """POST /api/v1/ingest/video — create video (skips duplicates by videoId)."""

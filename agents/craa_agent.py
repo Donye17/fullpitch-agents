@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import html as html_lib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,10 @@ def _current_season() -> str:
 
 def _domain(url: str) -> str:
     return urlparse(url).hostname or CRAA_SOURCE_NAME
+
+
+def _clean_entity_text(value: str | None) -> str:
+    return clean_text(html_lib.unescape(value or ""))
 
 
 def _parse_date(text: str | None) -> str | None:
@@ -143,12 +148,12 @@ def _generate_summary(title: str, content: str, source: str, client) -> str | No
 
 
 def _article_title_from_link(link) -> str:
-    title = link.get_text(" ", strip=True)
+    title = _clean_entity_text(link.get_text(" ", strip=True))
     if len(title) >= 10:
         return title
     parent = link.find_parent()
     heading = parent.select_one("h1, h2, h3, h4, .title, .headline") if parent else None
-    return heading.get_text(" ", strip=True) if heading else title
+    return _clean_entity_text(heading.get_text(" ", strip=True)) if heading else title
 
 
 def _looks_like_news_url(url: str) -> bool:
@@ -180,10 +185,10 @@ def _extract_news_articles(soup, base_url: str) -> list[dict[str, str]]:
         summary_el = parent.select_one("p, .excerpt, .summary, [class*='excerpt']") if parent else None
         articles.append(
             {
-                "title": clean_text(title),
+                "title": _clean_entity_text(title),
                 "url": url,
                 "date_text": (date_el.get("datetime", "") or date_el.get_text(" ", strip=True)) if date_el else "",
-                "summary": clean_text(summary_el.get_text(" ", strip=True)) if summary_el else "",
+                "summary": _clean_entity_text(summary_el.get_text(" ", strip=True)) if summary_el else "",
             }
         )
         seen.add(url)
@@ -195,7 +200,7 @@ def _extract_news_articles(soup, base_url: str) -> list[dict[str, str]]:
 def _extract_power_rankings(soup, base_url: str) -> list[dict[str, str]]:
     rankings: list[dict[str, str]] = []
     for link in soup.select("a[href]"):
-        text = clean_text(link.get_text(" ", strip=True))
+        text = _clean_entity_text(link.get_text(" ", strip=True))
         if not re.search(r"\b(power rankings?|rankings?)\b", text, re.IGNORECASE):
             continue
         href = link.get("href", "")
@@ -290,12 +295,14 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
         return
 
     league = _classify_article(article["title"], article_text, client)
-    article_summary = _generate_summary(article["title"], article_text, _domain(article["url"]), client)
+    article_summary = _clean_entity_text(
+        _generate_summary(article["title"], article_text, _domain(article["url"]), client)
+    )
 
     try:
         api.create_article(
             {
-                "title": article["title"],
+                "title": _clean_entity_text(article["title"]),
                 "url": article["url"],
                 "source": CRAA_SOURCE_NAME,
                 "publishedDate": published_date,

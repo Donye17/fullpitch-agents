@@ -35,10 +35,19 @@ NON_ARTICLE_PATH_PARTS = {
     "account",
     "events",
     "calendar",
+    "community-calendar",
+    "create-post",
+    "event-sanctioning",
+    "executive-committee",
+    "find-a-club",
+    "find-a-program",
+    "youth-and-high-school",
 }
 GENERIC_NAV_WORDS = {
+    "a",
     "about",
     "admin",
+    "and",
     "calendar",
     "club",
     "clubs",
@@ -88,7 +97,7 @@ def looks_like_article_url(url: str) -> bool:
         return False
     if ARTICLE_DATE_PATH_RE.search(path):
         return True
-    if len(parts) > 3 and _is_descriptive_slug(parts[-1]):
+    if _is_descriptive_slug(parts[-1]):
         return True
 
     return False
