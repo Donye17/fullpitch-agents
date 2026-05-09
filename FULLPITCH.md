@@ -271,7 +271,8 @@ fullpitch-agents/
 │   ├── content_agent.py     ← AI content writer (reports, recaps)
 │   ├── wer_agent.py         ← Women's Elite Rugby scores + standings
 │   ├── world_rankings_agent.py ← World Rugby Rankings (USA position)
-│   └── maintenance_agent.py ← daily article metadata repair
+│   ├── maintenance_agent.py ← daily article metadata repair
+│   └── craa_agent.py        ← CRAA news, rankings, postseason results
 ├── tools/
 │   ├── fullpitch_api.py     ← REST API wrapper (read + write)
 │   ├── search.py            ← web search utility
@@ -301,6 +302,7 @@ fullpitch-agents/
 | `wer-agent` | Hourly during WER season | Women's Elite Rugby scores + standings |
 | `world-rankings-agent` | Daily 8am UTC | World rankings |
 | `maintenance-agent` | Every cycle + daily 3am UTC full pass | Fast mode repairs recent articles; full mode audits all history |
+| `craa-agent` | Every 2 hours | CRAA news, D1A power rankings, postseason results |
 | `content-agent` | Triggered by other agents | Match reports, recaps |
 
 ### Gemini Model Constants
@@ -452,7 +454,8 @@ These must be copied to new project before deleting old folder:
 - **Step 21 (roadmap):** Program claim flow complete — `/claim/[teamId]` public page (viewable by anyone, submission requires Clerk sign-in) with form fields: name, role (Head Coach / Assistant Coach / Athletic Director / Team Manager / Other), email, optional verification message. Creates `Claim` record with `status="pending"`. Pre-fills name/email from Clerk if signed in. Prevents duplicate pending claims. Success/duplicate confirmation pages. `/teams/[id]` public team page showing team info, current standing, next match, recent results, roster; "Claim This Program" button appears only when team has no approved claim. `src/lib/claims.ts` provides standalone `approveClaim(claimId, adminClerkId)` and `rejectClaim(claimId, adminClerkId, reason?)` helpers. `npx tsc --noEmit` and `npm run build` pass.
 - **Agent source reliability fixes:** `FullpitchAPI` uses `httpx.Client(follow_redirects=True)` to handle 307s on all API reads/writes and has protected `PATCH /api/v1/articles/[id]` support for maintenance repairs. Direct `httpx.get` helpers also follow redirects. `tools/scraper.py` identifies outbound scrape requests with `User-Agent: Fullpitch/1.0 (fullpitch.app)`, pauses at least 2 seconds between consecutive requests to the same domain, provides `extract_og_image(url)`, `extract_publish_date(html)`, and `gemini_summarize(url)` for article TLDR repair. `mlr_agent.py` and `wer_agent.py` scrape NA Rugby DB 2026 standings and fixtures/results pages, parse table/event rows via `agents/narugbydb.py`, match abbreviated team names to seeded DB teams, and POST to `/api/v1/ingest/match` and `/api/v1/ingest/standing`. Fixture parsing uses NA Rugby DB's left/right team links first; `FullpitchAPI.get_team(name=...)` fetches teams and matches locally because the public teams endpoint does not support `name`.
 - **News image ingest/classification:** `news_agent.py` fetches the full article page for relevant web articles, extracts `<meta property="og:image">`, extracts original publish dates from article meta/time/JSON-LD fields, and sends `imageUrl` plus optional `publishedDate` to `/api/v1/ingest/article`. League classification uses title/content rather than source domain; `eagles` is reserved for USA Eagles national-team articles only, while USA Rugby org updates classify as `general`.
-- **Maintenance agent:** `agents/maintenance_agent.py` runs after all other boss sub-agents. Fast mode runs every cycle against articles created in the last 24 hours, repairing missing `imageUrl`, `publishedDate`, `slug`, `summary`, `sourceDomain`, and wrong `league` tags. Full mode runs only at 3 AM UTC, fetches all articles, applies the same repairs across history, and also regenerates summaries under 80 words using `gemini_summarize()`.
+- **Maintenance agent:** `agents/maintenance_agent.py` runs as the 8th boss sub-agent before CRAA ingest. Fast mode runs every cycle against articles created in the last 24 hours, repairing missing `imageUrl`, `publishedDate`, `slug`, `summary`, `sourceDomain`, and wrong `league` tags. Full mode runs only at 3 AM UTC, fetches all articles, applies the same repairs across history, and also regenerates summaries under 80 words using `gemini_summarize()`.
+- **CRAA agent:** `agents/craa_agent.py` runs as the 9th boss sub-agent after maintenance. It scrapes `craa.rugby/news-events/` for news, `craa.rugby/LinkHub/` for postseason score lines, and the homepage for D1A power rankings. Articles are classified with Gemini as `college` or `general`, include `og:image`/`publishedDate` when available, and write to `/api/v1/ingest/article`; resolved postseason results write to `/api/v1/ingest/match` with `league="craa-d1a"`.
 
 ### ⚠️ In Progress
 - Saving remaining assets from old project (seeds, `videos-backup.json`) as needed
@@ -518,6 +521,7 @@ These must be copied to new project before deleting old folder:
 | May 2026 | MLR and WER live data sources moved to NA Rugby DB after majorleague.rugby score URLs returned 404; shared parser handles standings, fixtures, results, team aliases, and a 1-second NA Rugby DB request pause. |
 | May 2026 | Fixed NA Rugby DB team resolution: fixture parsing now uses left/right team links for home/away, and API team lookup no longer treats the first `/teams` result as a name match. |
 | May 2026 | News agent now extracts source `publishedDate` from article meta/time/JSON-LD without falling back to today; fast maintenance backfills missing `publishedDate` from source pages. |
+| May 2026 | CRAA agent added as the 9th boss sub-agent for CRAA news, D1A power rankings, and postseason result ingestion from craa.rugby every 2 hours. |
 | May 2026 | Clerk — roles in `publicMetadata.role` (`admin` \| `program_rep` \| `user`); route gating in `clerkMiddleware` + `clerkClient.users.getUser`; webhooks via `verifyWebhook` + `CLERK_WEBHOOK_SIGNING_SECRET` |
 | Apr 2026 | Brand book and homepage mockup finalized |
 

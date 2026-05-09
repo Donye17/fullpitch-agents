@@ -11,6 +11,7 @@ Run order:
   6. college_agent     — college scores + standings
   7. world_rankings_agent — World Rugby Rankings (USA position)
   8. maintenance_agent — article metadata repair
+  9. craa_agent        — CRAA news, rankings, postseason results
 """
 
 import logging
@@ -27,6 +28,7 @@ AGENT_RUN_ORDER = [
     ("college", "agents.college_agent"),
     ("world-rankings", "agents.world_rankings_agent"),
     ("maintenance", "agents.maintenance_agent"),
+    ("craa", "agents.craa_agent"),
 ]
 
 
