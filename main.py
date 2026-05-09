@@ -9,9 +9,12 @@ Usage:
 import argparse
 import logging
 import os
+import threading
 import time
 
 from dotenv import load_dotenv
+
+from tools.fullpitch_api import FullpitchAPI
 
 load_dotenv()
 
@@ -39,6 +42,10 @@ AGENT_MAP = {
     "maintenance": "agents.maintenance_agent",
 }
 
+BOSS_INTERVAL_SECONDS = 60 * 60
+LIVE_ACTIVE_SLEEP_SECONDS = 60
+LIVE_IDLE_SLEEP_SECONDS = 300
+
 
 def init_sentry() -> None:
     dsn = os.getenv("SENTRY_DSN")
@@ -52,6 +59,89 @@ def init_sentry() -> None:
         logger.info("Sentry initialized")
     except Exception as exc:
         logger.warning("Failed to initialize Sentry: %s", exc)
+
+
+def is_today_or_live(match: dict) -> bool:
+    from agents.mlr_agent import _is_today_or_live
+
+    return _is_today_or_live(match)
+
+
+def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool:
+    from agents.mlr_agent import (
+        _build_match_page_url,
+        _match_team_name,
+        _parse_mlr_match_page,
+    )
+    from tools.scraper import fetch_text
+
+    api = api or FullpitchAPI()
+    url = _build_match_page_url(match)
+    if not url:
+        logger.warning(
+            "Live score tracker could not build MLR URL for %s vs %s",
+            _match_team_name(match, "home"),
+            _match_team_name(match, "away"),
+        )
+        return False
+
+    parsed = _parse_mlr_match_page(fetch_text(url, timeout=20.0), match)
+    score = parsed["score"]
+    status = parsed["status"]
+    if not score or status not in {"live", "final"}:
+        return False
+
+    home_score, away_score = score
+    current_status = str(match.get("status") or "").lower()
+    if (
+        match.get("homeScore") == home_score
+        and match.get("awayScore") == away_score
+        and current_status == status
+    ):
+        return False
+
+    api.update_match(
+        match["id"],
+        {
+            "homeScore": home_score,
+            "awayScore": away_score,
+            "status": status,
+            "events": {"sourceUrl": url, "liveScoreSource": "majorleague.rugby"},
+        },
+    )
+    logger.info(
+        "Live score tracker updated %s %s-%s %s (%s)",
+        _match_team_name(match, "home"),
+        home_score,
+        away_score,
+        _match_team_name(match, "away"),
+        status,
+    )
+    return True
+
+
+def live_score_loop() -> None:
+    api = FullpitchAPI()
+    logger.info("Live score tracker started")
+
+    while True:
+        try:
+            matches = api.get_matches(league="mlr", status=["scheduled", "live"], limit=100)
+            today_matches = [match for match in matches if is_today_or_live(match)]
+
+            if today_matches:
+                logger.info("Live score tracker checking %d match(es)", len(today_matches))
+                for match in today_matches:
+                    try:
+                        check_and_update_score(match, api)
+                    except Exception as exc:
+                        logger.error("Live score error for match %s: %s", match.get("id"), exc)
+                time.sleep(LIVE_ACTIVE_SLEEP_SECONDS)
+            else:
+                time.sleep(LIVE_IDLE_SLEEP_SECONDS)
+        except Exception as exc:
+            logger.error("Live score error: %s", exc)
+            time.sleep(LIVE_ACTIVE_SLEEP_SECONDS)
 
 
 def run_agent(name: str) -> None:
@@ -78,6 +168,17 @@ def run_agent(name: str) -> None:
         logger.info("Agent %s finished in %.1fs", name, elapsed)
 
 
+def run_boss_service() -> None:
+    live_thread = threading.Thread(target=live_score_loop, daemon=True)
+    live_thread.start()
+
+    logger.info("Boss service started — running boss agent every %d seconds", BOSS_INTERVAL_SECONDS)
+    while True:
+        run_agent("boss")
+        logger.info("Boss service sleeping %.0f minutes", BOSS_INTERVAL_SECONDS / 60)
+        time.sleep(BOSS_INTERVAL_SECONDS)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fullpitch ADK Agents")
     parser.add_argument(
@@ -90,7 +191,10 @@ def main() -> None:
     args = parser.parse_args()
 
     init_sentry()
-    run_agent(args.agent)
+    if args.agent == "boss":
+        run_boss_service()
+    else:
+        run_agent(args.agent)
 
 
 if __name__ == "__main__":

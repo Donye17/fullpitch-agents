@@ -102,11 +102,24 @@ class FullpitchAPI:
         self,
         league: str | None = None,
         season: str | None = None,
-        status: str | None = None,
+        status: str | list[str] | tuple[str, ...] | None = None,
         limit: int = 100,
         page: int = 1,
     ) -> list[dict[str, Any]]:
         """GET /api/v1/matches — match list with common filters."""
+        if isinstance(status, (list, tuple)):
+            matches: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for item in status:
+                for match in self.get_matches(league=league, season=season, status=item, limit=limit, page=page):
+                    match_id = match.get("id")
+                    if match_id and match_id in seen:
+                        continue
+                    if match_id:
+                        seen.add(match_id)
+                    matches.append(match)
+            return matches
+
         params: dict[str, Any] = {"limit": limit, "page": page}
         if league:
             params["league"] = league
@@ -211,6 +224,11 @@ class FullpitchAPI:
         """POST /api/v1/ingest/match — idempotent match upsert."""
         logger.info("Upserting match: %s vs %s", data.get("homeTeamId", "?"), data.get("awayTeamId", "?"))
         return self._post("match", data)
+
+    def update_match(self, match_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """PATCH /api/v1/matches/[id] — protected partial match update."""
+        logger.info("Updating match %s: %s", match_id, ", ".join(data.keys()))
+        return self._patch(f"matches/{match_id}", data)
 
     def upsert_standing(self, data: dict[str, Any]) -> dict[str, Any]:
         """POST /api/v1/ingest/standing — idempotent standing upsert."""
