@@ -181,21 +181,70 @@ def _parse_live_score(text: str, home_abbr: str, away_abbr: str) -> tuple[int, i
     return None
 
 
-def _scoreboard_texts(soup: BeautifulSoup) -> list[str]:
-    texts: list[str] = []
-    for selector in (
-        "[class*='score']",
-        "[id*='score']",
-        "[class*='scoreboard']",
-        "[id*='scoreboard']",
-        "[class*='match-header']",
-        "[class*='match-score']",
-    ):
-        for node in soup.select(selector):
-            text = " ".join(node.get_text(" ", strip=True).split())
-            if text and text not in texts:
-                texts.append(text)
-    return texts
+def _pre_history_lines(lines: list[str]) -> list[str]:
+    stop_patterns = (
+        r"\brecent meetings\b",
+        r"\bhead to head\b",
+        r"\bteam trend\b",
+        r"\bseason stats\b",
+    )
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if any(re.search(pattern, lowered) for pattern in stop_patterns):
+            return lines[:index]
+    return lines
+
+
+def _clock_score_context(lines: list[str]) -> str:
+    for index, line in enumerate(lines[:120]):
+        if re.fullmatch(r"(?:1T|2T|HT|FT|\d{1,2}:\d{2})", line, flags=re.IGNORECASE):
+            start = max(index - 12, 0)
+            end = min(index + 13, len(lines))
+            return " ".join(lines[start:end])
+    return ""
+
+
+def _team_order_score(lines: list[str], match: dict[str, Any]) -> tuple[int, int] | None:
+    home_terms = {
+        _lookup_key(_match_team_name(match, "home")),
+        _lookup_key(_match_team_abbr(match, "home")),
+    }
+    away_terms = {
+        _lookup_key(_match_team_name(match, "away")),
+        _lookup_key(_match_team_abbr(match, "away")),
+    }
+    home_terms.discard("")
+    away_terms.discard("")
+
+    def matches_any(key: str, terms: set[str]) -> bool:
+        return any(term and (key == term or term in key or key in term) for term in terms)
+
+    for index in range(min(len(lines), 120)):
+        first_key = _lookup_key(lines[index])
+        if matches_any(first_key, home_terms):
+            first_side = "home"
+            second_terms = away_terms
+        elif matches_any(first_key, away_terms):
+            first_side = "away"
+            second_terms = home_terms
+        else:
+            continue
+        window = lines[index : min(index + 10, len(lines))]
+        numbers: list[int] = []
+        second_team_seen = False
+        for item in window[1:]:
+            key = _lookup_key(item)
+            if re.fullmatch(r"\d{1,3}", item):
+                numbers.append(int(item))
+                continue
+            if matches_any(key, second_terms):
+                second_team_seen = True
+                break
+        if second_team_seen and len(numbers) >= 2:
+            if first_side == "home":
+                return numbers[0], numbers[1]
+            return numbers[1], numbers[0]
+    return None
 
 
 def _team_score_context(lines: list[str], match: dict[str, Any]) -> str:
@@ -227,14 +276,35 @@ def _team_score_context(lines: list[str], match: dict[str, Any]) -> str:
     return " ".join(lines[start:end])
 
 
-def _header_lines(lines: list[str]) -> list[str]:
-    stop_labels = {"Preview", "Head to head", "Stats", "Highlights", "Match Preview", "Lineups"}
-    header: list[str] = []
-    for line in lines[:80]:
-        if line in stop_labels:
-            break
-        header.append(line)
-    return header
+def _extract_current_score(lines: list[str], match: dict[str, Any]) -> tuple[tuple[int, int] | None, str, str]:
+    home_abbr = _match_team_abbr(match, "home")
+    away_abbr = _match_team_abbr(match, "away")
+    live_lines = _pre_history_lines(lines)
+    live_text = " ".join(live_lines)
+
+    clock_context = _clock_score_context(live_lines)
+    if clock_context:
+        score = _parse_live_score(clock_context, home_abbr, away_abbr)
+        if score:
+            return score, "clock-section", clock_context
+
+    team_order_score = _team_order_score(live_lines, match)
+    if team_order_score:
+        return team_order_score, "team-name-score-order", _team_score_context(live_lines, match)
+
+    team_context = _team_score_context(live_lines, match)
+    if team_context:
+        score = _parse_live_score(team_context, home_abbr, away_abbr)
+        if score:
+            return score, "team-nearby-section", team_context
+
+    score = _parse_live_score(live_text, home_abbr, away_abbr)
+    if score:
+        score_match = re.search(r"\b\d{1,3}\s*[-–]\s*\d{1,3}\b", live_text)
+        context = live_text[max((score_match.start() if score_match else 0) - 160, 0) : (score_match.end() if score_match else 0) + 160]
+        return score, "first-pre-history-dash-score", context
+
+    return None, "none", ""
 
 
 def _text_lines(soup: BeautifulSoup) -> list[str]:
@@ -357,23 +427,12 @@ def _parse_mlr_match_page(html: str, match: dict[str, Any]) -> dict[str, Any]:
         len(text),
         text[:500],
     )
-    header_text = " ".join(_header_lines(lines))
-    home_abbr = _match_team_abbr(match, "home")
-    away_abbr = _match_team_abbr(match, "away")
-    contexts = [
-        *_scoreboard_texts(soup),
-        _team_score_context(lines, match),
-        header_text,
-    ]
-    score = next(
-        (
-            parsed
-            for context in contexts
-            if context
-            for parsed in [_parse_live_score(context, home_abbr, away_abbr)]
-            if parsed
-        ),
-        None,
+    score, score_source, score_context = _extract_current_score(lines, match)
+    logger.info(
+        "MLR live score extracted score=%s source=%s context=%r",
+        score,
+        score_source,
+        score_context[:500],
     )
     status = _parse_live_status(text)
     kickoff = _parse_match_datetime(match.get("kickoffTime"))
