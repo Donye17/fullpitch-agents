@@ -230,8 +230,13 @@ def _parse_match_datetime(date_text: str, result_text: str) -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def parse_fixtures_page(soup: BeautifulSoup) -> list[dict[str, Any]]:
+def parse_fixtures_page(
+    soup: BeautifulSoup,
+    allowed_team_names: set[str] | None = None,
+) -> list[dict[str, Any]]:
     """Parse NA Rugby DB fixture/result rows."""
+    allowed_lookup = {normalize_team_name(name).lower() for name in allowed_team_names or set()}
+
     for table in soup.select("table"):
         matches: list[dict[str, Any]] = []
 
@@ -245,6 +250,16 @@ def parse_fixtures_page(soup: BeautifulSoup) -> list[dict[str, Any]]:
             teams = _parse_event_teams(row)
             if teams is None:
                 continue
+            home_name, away_name = teams
+            if allowed_lookup and (
+                home_name.lower() not in allowed_lookup or away_name.lower() not in allowed_lookup
+            ):
+                logger.debug(
+                    "Skipping NA Rugby DB row outside allowed teams: %s vs %s",
+                    home_name,
+                    away_name,
+                )
+                continue
 
             result_text = result_el.get_text(" ", strip=True)
             score_match = re.fullmatch(r"\s*(\d+)\s*-\s*(\d+)\s*", result_text)
@@ -252,8 +267,8 @@ def parse_fixtures_page(soup: BeautifulSoup) -> list[dict[str, Any]]:
 
             matches.append(
                 {
-                    "home_name": teams[0],
-                    "away_name": teams[1],
+                    "home_name": home_name,
+                    "away_name": away_name,
                     "home_score": int(score_match.group(1)) if score_match else 0,
                     "away_score": int(score_match.group(2)) if score_match else 0,
                     "match_date": _parse_match_datetime(date_el.get_text(" ", strip=True), result_text),

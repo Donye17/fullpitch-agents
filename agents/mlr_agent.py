@@ -61,14 +61,19 @@ def _ingest_matches(api: FullpitchAPI, season: str, matches: list[dict[str, Any]
         away_name = parsed["away_name"]
         home_team = resolve_team(api, home_name)
         away_team = resolve_team(api, away_name)
+        home_team_id = home_team.get("id") if home_team else None
+        away_team_id = away_team.get("id") if away_team else None
 
-        if not home_team:
-            msg = f"MLR home team not in DB: '{home_name}'"
-            logger.warning(msg)
-            summary["errors"].append(msg)
-            continue
-        if not away_team:
-            msg = f"MLR away team not in DB: '{away_name}'"
+        logger.info(
+            "Match: %s (id: %s) vs %s (id: %s)",
+            home_name,
+            home_team_id or "None",
+            away_name,
+            away_team_id or "None",
+        )
+
+        if not home_team_id or not away_team_id or home_team_id == away_team_id:
+            msg = f"Skipping invalid match: {home_name} vs {away_name} - team lookup failed"
             logger.warning(msg)
             summary["errors"].append(msg)
             continue
@@ -76,8 +81,8 @@ def _ingest_matches(api: FullpitchAPI, season: str, matches: list[dict[str, Any]
         try:
             api.upsert_match(
                 {
-                    "homeTeamId": home_team["id"],
-                    "awayTeamId": away_team["id"],
+                    "homeTeamId": home_team_id,
+                    "awayTeamId": away_team_id,
                     "homeScore": parsed["home_score"],
                     "awayScore": parsed["away_score"],
                     "matchDate": parsed["match_date"],

@@ -25,6 +25,14 @@ logger = logging.getLogger(__name__)
 WER_STANDINGS_URL = "https://narugbydb.com/2026-wer-season-standings/"
 WER_FIXTURES_URL = "https://narugbydb.com/calendar/2026-wer-fixtures-results/"
 WER_SEASON = "2026"
+WER_TEAM_NAMES = {
+    "Bay Breakers",
+    "Boston Banshees",
+    "Chicago Tempest",
+    "Denver Onyx",
+    "New York Exiles",
+    "TC Gemini",
+}
 
 
 def _current_season() -> str:
@@ -41,7 +49,7 @@ def _data_source_urls(api: FullpitchAPI) -> tuple[str, str]:
 
 def _fetch_wer_fixtures(url: str) -> list[dict[str, Any]]:
     soup = fetch_narugbydb_html(url)
-    matches = parse_fixtures_page(soup)
+    matches = parse_fixtures_page(soup, allowed_team_names=WER_TEAM_NAMES)
     logger.info("Parsed %d WER fixtures/results from NA Rugby DB", len(matches))
     return matches
 
@@ -59,16 +67,27 @@ def _ingest_matches(api: FullpitchAPI, season: str, matches: list[dict[str, Any]
     for parsed in matches:
         home_name = parsed["home_name"]
         away_name = parsed["away_name"]
-        home_team = resolve_team(api, home_name)
-        away_team = resolve_team(api, away_name)
-
-        if not home_team:
-            msg = f"WER home team not in DB: '{home_name}'"
+        if home_name not in WER_TEAM_NAMES or away_name not in WER_TEAM_NAMES:
+            msg = f"Skipping invalid match: {home_name} vs {away_name} - team lookup failed"
             logger.warning(msg)
             summary["errors"].append(msg)
             continue
-        if not away_team:
-            msg = f"WER away team not in DB: '{away_name}'"
+
+        home_team = resolve_team(api, home_name)
+        away_team = resolve_team(api, away_name)
+        home_team_id = home_team.get("id") if home_team else None
+        away_team_id = away_team.get("id") if away_team else None
+
+        logger.info(
+            "Match: %s (id: %s) vs %s (id: %s)",
+            home_name,
+            home_team_id or "None",
+            away_name,
+            away_team_id or "None",
+        )
+
+        if not home_team_id or not away_team_id or home_team_id == away_team_id:
+            msg = f"Skipping invalid match: {home_name} vs {away_name} - team lookup failed"
             logger.warning(msg)
             summary["errors"].append(msg)
             continue
@@ -76,8 +95,8 @@ def _ingest_matches(api: FullpitchAPI, season: str, matches: list[dict[str, Any]
         try:
             api.upsert_match(
                 {
-                    "homeTeamId": home_team["id"],
-                    "awayTeamId": away_team["id"],
+                    "homeTeamId": home_team_id,
+                    "awayTeamId": away_team_id,
                     "homeScore": parsed["home_score"],
                     "awayScore": parsed["away_score"],
                     "matchDate": parsed["match_date"],
@@ -98,6 +117,12 @@ def _ingest_matches(api: FullpitchAPI, season: str, matches: list[dict[str, Any]
 def _ingest_standings(api: FullpitchAPI, season: str, standings: list[dict[str, Any]], summary: dict[str, Any]) -> None:
     for row in standings:
         team_name = row["team_name"]
+        if team_name not in WER_TEAM_NAMES:
+            msg = f"Skipping WER standing for non-WER team: '{team_name}'"
+            logger.warning(msg)
+            summary["errors"].append(msg)
+            continue
+
         team = resolve_team(api, team_name)
         if not team:
             msg = f"WER standings team not in DB: '{team_name}'"
