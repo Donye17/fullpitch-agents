@@ -259,20 +259,26 @@ def _page_text(soup: BeautifulSoup) -> str:
     return " ".join(soup.get_text(" ", strip=True).split())
 
 
-def gemini_summarize(url: str) -> str | None:
-    """Fetch a page and generate a concise Gemini TLDR."""
+def extract_page_text_from_html(html: str) -> str:
+    """Return readable article text from raw HTML."""
+    return _page_text(BeautifulSoup(html, "html.parser"))
+
+
+def gemini_summarize(url: str, text: str | None = None) -> str | None:
+    """Generate a 150-200 word Gemini summary for an article."""
     client = _get_genai_client()
     if client is None:
         logger.warning("GOOGLE_API_KEY not set — cannot summarize %s", url)
         return None
 
-    try:
-        soup = fetch_html(url)
-    except ScraperError as exc:
-        logger.warning("Failed to fetch page text from %s: %s", url, exc)
-        return None
+    if text is None:
+        try:
+            soup = fetch_html(url)
+            text = _page_text(soup)
+        except ScraperError as exc:
+            logger.warning("Failed to fetch page text from %s: %s", url, exc)
+            return None
 
-    text = _page_text(soup)
     if not text:
         return None
 
@@ -280,10 +286,18 @@ def gemini_summarize(url: str) -> str | None:
         response = client.models.generate_content(
             model=GEMINI_WRITING_MID,
             contents=(
-                "Write a neutral 4-6 sentence TLDR, around 100 words, for US rugby fans. "
-                "Cover what happened, who is involved, and why it matters to US rugby fans. "
-                'Do not start with "This article" or "In this piece." '
-                f"Source URL: {url}\n\nPage text:\n{text[:6000]}"
+                "You are a sports journalist writing for a US rugby news aggregator. "
+                "Write a 150-200 word summary of the following article for rugby fans.\n\n"
+                "The summary must:\n"
+                "- Be 4-6 full sentences, minimum 150 words\n"
+                "- Cover: what happened, who was involved, key details, and why it matters to US rugby fans\n"
+                "- Include specific names, scores, or statistics mentioned in the article\n"
+                "- Be written in an engaging, informative tone\n"
+                "- NOT start with 'This article' or 'In this piece'\n"
+                "- NOT be a list — write in flowing prose paragraphs\n\n"
+                f"Article URL: {url}\n"
+                f"Article text: {text[:8000]}\n\n"
+                "Write the summary now:"
             ),
         )
         summary = clean_text(response.text.strip())

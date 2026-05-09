@@ -21,9 +21,11 @@ from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import (
     ScraperError,
     extract_og_image_from_html,
+    extract_page_text_from_html,
     extract_publish_date,
     fetch_html,
     fetch_text,
+    gemini_summarize,
 )
 from tools.search import fetch_subreddit_new, rate_limit_reddit
 from tools.text_utils import clean_text
@@ -89,14 +91,14 @@ def _is_us_rugby(title: str, client) -> bool:
 
 
 def _generate_summary(title: str, content: str, source: str, client) -> str | None:
-    """Use Gemini to write a 2-3 sentence summary."""
+    """Use Gemini to write a 150-200 word article summary."""
     if client is None:
         return None
     try:
         template = _load_summary_prompt()
         prompt = template.replace("{title}", title).replace(
             "{source}", source
-        ).replace("{content}", content[:500])
+        ).replace("{content}", content[:4000])
         resp = client.models.generate_content(
             model=GEMINI_WRITING_MID,
             contents=prompt,
@@ -292,21 +294,24 @@ def run_news_agent() -> dict[str, Any]:
                     summary["skipped_irrelevant"] += 1
                     continue
 
-            article_summary = _generate_summary(
-                art["title"], art.get("snippet", ""), _domain(url), genai_client
-            )
-
-            article_league = league or _classify_league(
-                art["title"], art.get("snippet", ""), genai_client
-            )
             image_url = None
             published_date = None
+            article_text = art.get("snippet", "")
             try:
                 article_html = fetch_text(article_url)
                 image_url = extract_og_image_from_html(article_html, article_url)
                 published_date = extract_publish_date(article_html)
+                article_text = extract_page_text_from_html(article_html) or article_text
             except ScraperError as exc:
                 logger.warning("Failed to fetch article metadata from %s: %s", article_url, exc)
+
+            article_summary = gemini_summarize(article_url, article_text) or _generate_summary(
+                art["title"], article_text, _domain(url), genai_client
+            )
+
+            article_league = league or _classify_league(
+                art["title"], article_text, genai_client
+            )
 
             try:
                 api.create_article({
@@ -316,7 +321,7 @@ def run_news_agent() -> dict[str, Any]:
                     "publishedDate": published_date,
                     "league": article_league,
                     "summary": article_summary,
-                    "content": art.get("snippet"),
+                    "content": article_text[:2000] if article_text else art.get("snippet"),
                     "imageUrl": image_url,
                     "agentName": "news-agent",
                     "tags": [article_league] if article_league else [],

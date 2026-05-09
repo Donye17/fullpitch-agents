@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 ARTICLE_LIMIT = 200
 REQUEST_DELAY_SECONDS = 1
 GEMINI_REASONING = "gemini-2.5-flash"
-MIN_SUMMARY_WORDS = 80
+MIN_SUMMARY_WORDS = 150
 
 TITLE_LEAGUE_RULES = (
     (re.compile(r"\b(collegiate|college|craa|ncr|sevens nationals)\b", re.I), "college"),
@@ -305,7 +305,7 @@ def run_maintenance_agent() -> dict[str, Any]:
             articles=fast_articles,
             api=api,
             genai_client=genai_client,
-            repair_short_summary=False,
+            repair_short_summary=True,
         )
 
     if is_full_maintenance_window():

@@ -132,7 +132,7 @@ def _generate_summary(title: str, content: str, source: str, client) -> str | No
         return clean_text(content)[:500] if content else None
     try:
         template = _load_summary_prompt()
-        prompt = template.replace("{title}", title).replace("{source}", source).replace("{content}", content[:500])
+        prompt = template.replace("{title}", title).replace("{source}", source).replace("{content}", content[:4000])
         response = client.models.generate_content(model=GEMINI_WRITING_MID, contents=prompt)
         return clean_text(response.text)
     except Exception:
