@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -177,6 +178,8 @@ def _parse_publish_date(value: str | None) -> str | None:
         "%Y-%m-%d",
         "%B %d, %Y",
         "%b %d, %Y",
+        "%B %d %Y",
+        "%b %d %Y",
         "%m/%d/%Y",
         "%d %B %Y",
         "%d %b %Y",
@@ -239,6 +242,28 @@ def extract_publish_date(html: str) -> str | None:
         parsed = _jsonld_date_published(data)
         if parsed:
             return parsed
+
+    byline_pattern = re.compile(
+        r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|"
+        r"Dec(?:ember)?)\s+\d{1,2},\s+\d{4}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b",
+        re.IGNORECASE,
+    )
+    for selector in (
+        ".byline",
+        ".author",
+        ".post-meta",
+        ".entry-meta",
+        ".published",
+        "[class*='byline']",
+        "[class*='date']",
+        "[class*='meta']",
+    ):
+        for node in soup.select(selector):
+            match = byline_pattern.search(node.get_text(" ", strip=True))
+            parsed = _parse_publish_date(match.group(0) if match else None)
+            if parsed:
+                return parsed
 
     return None
 

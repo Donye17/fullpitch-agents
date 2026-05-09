@@ -17,6 +17,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
+from tools.college_leagues import classify_college_league, decode_html
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import ScraperError, fetch_html
 
@@ -189,8 +190,24 @@ def _classify_league(title: str, channel: str) -> str:
     if any(kw in combined for kw in ("eagles", "usa rugby", "usa men", "usa women", "test match")):
         return "eagles"
 
-    if any(kw in combined for kw in ("college", "collegiate", "craa", "ncr", "university", "d1a")):
-        return "craa-d1a"
+    if any(
+        kw in combined
+        for kw in (
+            "college",
+            "collegiate",
+            "craa",
+            "ncr",
+            "national collegiate rugby",
+            "nira",
+            "university",
+            "d1a",
+            "d1aa",
+            "division i",
+            "division ii",
+            "division iii",
+        )
+    ):
+        return classify_college_league(title, channel, default="college")
 
     if any(kw in combined for kw in ("club rugby", "us club", "usa club")):
         return "club"
@@ -274,8 +291,9 @@ def run_video_agent() -> dict[str, Any]:
             summary["skipped_old"] += 1
             continue
 
-        title = video.get("title", "")
-        channel = video.get("channelName", "")
+        title = decode_html(video.get("title", ""))
+        description = decode_html(video.get("description", ""))
+        channel = decode_html(video.get("channelName", ""))
 
         if not _is_us_rugby_video(title, channel, genai_client):
             summary["skipped_irrelevant"] += 1
@@ -288,7 +306,7 @@ def run_video_agent() -> dict[str, Any]:
             api.create_video({
                 "videoId": vid_id,
                 "title": title,
-                "description": video.get("description", "")[:500],
+                "description": description[:500],
                 "thumbnailUrl": video.get("thumbnailUrl", ""),
                 "channelName": channel,
                 "channelId": video.get("channelId", ""),

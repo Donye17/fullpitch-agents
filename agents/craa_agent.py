@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from tools.article_filter import has_minimum_content, is_viable_article_candidate, looks_like_article_url
+from tools.college_leagues import classify_college_league, classify_college_league_with_gemini
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import (
     ScraperError,
@@ -116,34 +117,41 @@ def _parse_date(text: str | None) -> str | None:
 
 
 def _classify_article(title: str, snippet: str, client) -> str:
-    """Classify CRAA articles as college content or general org/admin news."""
+    """Classify CRAA articles using the most specific college division tag."""
     fallback_general = re.search(
         r"\b(board|committee|meeting|policy|bylaw|membership|registration|announcement|admin)\b",
         f"{title} {snippet}",
         flags=re.IGNORECASE,
     )
     if client is None:
-        return "general" if fallback_general else "college"
+        return "general" if fallback_general else classify_college_league(title, snippet, default="college")
 
     try:
         response = client.models.generate_content(
             model=GEMINI_REASONING,
             contents=(
-                "Classify this CRAA rugby article as exactly one category.\n\n"
-                "- college: CRAA D1A, D1AA, men's college rugby, women's college rugby, "
-                "teams, rankings, fixtures, postseason, awards, or results.\n"
+                "Classify this CRAA rugby article as exactly one tag.\n\n"
+                "Valid tags:\n"
+                "- craa-d1a: CRAA Men's D1A. Use for D1A or D1-A.\n"
+                "- craa-d1aa: CRAA Men's D1AA. Use for D1AA or D1-AA.\n"
+                "- craa-women: CRAA Women's.\n"
+                "- college: CRAA/college rugby when the division is unclear.\n"
                 "- general: CRAA organization/admin announcements, governance, policy, "
                 "registration, meetings, or non-competition notices.\n\n"
                 f"Title: {title}\n"
                 f"Summary: {snippet[:1000]}\n\n"
-                "Reply with ONLY college or general."
+                "Reply with ONLY one tag."
             ),
         )
         category = response.text.strip().lower()
-        return category if category in {"college", "general"} else "college"
+        if category == "college":
+            return classify_college_league(title, snippet, default="college")
+        if category in {"craa-d1a", "craa-d1aa", "craa-women", "general"}:
+            return category
+        return classify_college_league(title, snippet, default="college")
     except Exception:
         logger.exception("Gemini CRAA article classification failed for %s", title[:80])
-        return "general" if fallback_general else "college"
+        return "general" if fallback_general else classify_college_league_with_gemini(title, snippet, None)
 
 
 def _generate_summary(title: str, content: str, source: str, client) -> str | None:

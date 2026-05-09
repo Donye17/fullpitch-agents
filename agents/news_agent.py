@@ -21,6 +21,7 @@ from tools.article_filter import (
     is_viable_article_candidate,
     looks_like_article_url,
 )
+from tools.college_leagues import VALID_COLLEGE_LEAGUES, classify_college_league
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import (
     ScraperError,
@@ -373,8 +374,15 @@ def _classify_league(title: str, content: str, client) -> str:
                 "Categories:\n"
                 "- mlr: Major League Rugby, MLR teams or MLR players.\n"
                 "- wer: Women's Elite Rugby, WER teams or WER players.\n"
-                "- college: CRAA, NCR, collegiate rugby, sevens nationals, college programs, "
-                "or student athletes.\n"
+                "- craa-d1a: CRAA Men's D1A, D1A, or D1-A.\n"
+                "- craa-d1aa: CRAA Men's D1AA, D1AA, or D1-AA.\n"
+                "- craa-women: CRAA Women's.\n"
+                "- ncr-d1: NCR Men's Division I.\n"
+                "- ncr-d2: NCR Men's Division II.\n"
+                "- ncr-d3: NCR Men's Division III.\n"
+                "- ncr-women: NCR Women's.\n"
+                "- nira: NIRA Women's.\n"
+                "- college: general college rugby when the specific division is unclear.\n"
                 "- eagles: USA Eagles national team ONLY, men's or women's national team "
                 "competing internationally.\n"
                 "- club: club rugby or territorial unions.\n"
@@ -387,8 +395,14 @@ def _classify_league(title: str, content: str, client) -> str:
             ),
         )
         category = resp.text.strip().lower()
-        valid = {"mlr", "wer", "college", "eagles", "club", "high-school", "general"}
-        return category if category in valid else "general"
+        valid = {"mlr", "wer", "eagles", "club", "high-school", "general", *VALID_COLLEGE_LEAGUES}
+        if category == "college":
+            return classify_college_league(title, content, default="college")
+        if category in valid:
+            return category
+        if "college" in f"{title} {content}".lower() or "craa" in f"{title} {content}".lower() or "ncr" in f"{title} {content}".lower():
+            return classify_college_league(title, content, default="college")
+        return "general"
     except Exception:
         logger.exception("Gemini league classification failed")
         return "general"

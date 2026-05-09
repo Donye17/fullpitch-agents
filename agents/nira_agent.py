@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from tools.article_filter import has_minimum_content, is_viable_article_candidate, looks_like_article_url
+from tools.college_leagues import classify_college_league_with_gemini, decode_html
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import (
     ScraperError,
@@ -83,11 +84,11 @@ def _extract_articles(soup, base_url: str) -> list[dict[str, str]]:
         url = urljoin(base_url, href)
         if url in seen or not looks_like_article_url(url):
             continue
-        title = clean_text(link.get_text(" ", strip=True))
+        title = decode_html(clean_text(link.get_text(" ", strip=True)))
         parent = link.find_parent()
         if not title and parent:
             heading = parent.select_one("h1, h2, h3, h4, .title, .headline")
-            title = clean_text(heading.get_text(" ", strip=True)) if heading else ""
+            title = decode_html(clean_text(heading.get_text(" ", strip=True))) if heading else ""
         if not is_viable_article_candidate(title=title, url=url):
             continue
         seen.add(url)
@@ -112,20 +113,23 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
         return
 
     image_url = extract_og_image_from_html(html, article["url"]) or extract_og_image(article["url"])
+    title = decode_html(article["title"])
+    league = classify_college_league_with_gemini(title, text, client, default="nira")
+    summary_text = decode_html(gemini_summarize(article["url"], text))
     try:
         api.create_article(
             {
-                "title": article["title"],
+                "title": title,
                 "url": article["url"],
                 "source": _domain(article["url"]),
                 "publishedDate": extract_publish_date(html),
-                "league": "college",
+                "league": league,
                 "gender": "WOMENS",
-                "summary": gemini_summarize(article["url"], text),
+                "summary": summary_text,
                 "content": text[:2000],
                 "imageUrl": image_url,
                 "agentName": "nira-agent",
-                "tags": ["college", "nira", "women"],
+                "tags": ["college", "nira", "women", league],
             }
         )
         summary["articles_written"] += 1

@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
+from tools.college_leagues import classify_college_league
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import (
     ScraperError,
@@ -43,12 +44,28 @@ JUNK_TITLES = {
 }
 
 TITLE_LEAGUE_RULES = (
-    (re.compile(r"\b(collegiate|college|craa|ncr|sevens nationals)\b", re.I), "college"),
+    (re.compile(r"\b(craa|ncr|nira|d1a|d1-aa|d1aa|division\s+i|division\s+ii|division\s+iii)\b", re.I), "college"),
     (re.compile(r"\b(high school|high-school)\b", re.I), "high-school"),
     (re.compile(r"\b(coaching|certification|certifications)\b", re.I), "general"),
 )
 
-VALID_LEAGUES = {"mlr", "wer", "college", "eagles", "club", "high-school", "general"}
+VALID_LEAGUES = {
+    "mlr",
+    "wer",
+    "craa-d1a",
+    "craa-d1aa",
+    "craa-women",
+    "ncr-d1",
+    "ncr-d2",
+    "ncr-d3",
+    "ncr-women",
+    "nira",
+    "college",
+    "eagles",
+    "club",
+    "high-school",
+    "general",
+}
 
 
 def _slugify(title: str) -> str:
@@ -97,7 +114,7 @@ def _get_genai_client():
 def _keyword_league(title: str) -> str | None:
     for pattern, league in TITLE_LEAGUE_RULES:
         if pattern.search(title):
-            return league
+            return classify_college_league(title, default="college") if league == "college" else league
     return None
 
 
@@ -114,8 +131,15 @@ def _classify_league_with_gemini(title: str, content: str, client) -> str | None
                 "Categories:\n"
                 "- mlr: Major League Rugby, MLR teams or MLR players.\n"
                 "- wer: Women's Elite Rugby, WER teams or WER players.\n"
-                "- college: CRAA, NCR, collegiate rugby, sevens nationals, college programs, "
-                "or student athletes.\n"
+                "- craa-d1a: CRAA Men's D1A, D1A, or D1-A.\n"
+                "- craa-d1aa: CRAA Men's D1AA, D1AA, or D1-AA.\n"
+                "- craa-women: CRAA Women's.\n"
+                "- ncr-d1: NCR Men's Division I.\n"
+                "- ncr-d2: NCR Men's Division II.\n"
+                "- ncr-d3: NCR Men's Division III.\n"
+                "- ncr-women: NCR Women's.\n"
+                "- nira: NIRA Women's.\n"
+                "- college: general college rugby when the specific division is unclear.\n"
                 "- eagles: USA Eagles national team ONLY, men's or women's national team "
                 "competing internationally.\n"
                 "- club: club rugby or territorial unions.\n"
@@ -187,6 +211,28 @@ def _all_articles(api: FullpitchAPI) -> list[dict[str, Any]]:
             break
 
     return articles
+
+
+def _all_videos(api: FullpitchAPI) -> list[dict[str, Any]]:
+    videos: list[dict[str, Any]] = []
+    page = 1
+
+    while True:
+        envelope = api.get_videos(limit=ARTICLE_LIMIT, page=page)
+        batch = envelope.get("data", [])
+        meta = envelope.get("meta", {})
+        videos.extend(batch)
+
+        total = int(meta.get("total") or len(videos))
+        returned_limit = int(meta.get("limit") or ARTICLE_LIMIT)
+        if not batch or len(videos) >= total:
+            break
+
+        page += 1
+        if page * returned_limit > total + returned_limit:
+            break
+
+    return videos
 
 
 def _recent_articles(api: FullpitchAPI) -> list[dict[str, Any]]:
@@ -323,6 +369,17 @@ def _run_mode(
     return summary
 
 
+def _repair_video_title(video: dict[str, Any], api: FullpitchAPI) -> bool:
+    raw_title = video.get("title") or ""
+    title = _unescape_text(raw_title)
+    if not title or title == raw_title:
+        return False
+
+    api.update_video(video["id"], {"title": title})
+    logger.info("Full maintenance: fixed title for video %s", title)
+    return True
+
+
 def run_maintenance_agent() -> dict[str, Any]:
     """Run fast maintenance every cycle and full maintenance at 3 AM UTC."""
     api = FullpitchAPI()
@@ -357,6 +414,22 @@ def run_maintenance_agent() -> dict[str, Any]:
                 genai_client=genai_client,
                 repair_short_summary=True,
             )
+            try:
+                full_videos = _all_videos(api)
+                video_titles_fixed = 0
+                for video in full_videos:
+                    try:
+                        if _repair_video_title(video, api):
+                            video_titles_fixed += 1
+                    except Exception as exc:
+                        title = video.get("title") or video.get("id") or "unknown"
+                        logger.exception("Video title maintenance failed for %s", title)
+                        result["full"]["errors"].append(f"video {title}: {exc}")
+                    time.sleep(REQUEST_DELAY_SECONDS)
+                result["full"]["video_titles_fixed"] = video_titles_fixed
+            except FullpitchAPIError as exc:
+                logger.error("Failed to fetch all videos for full maintenance: %s", exc)
+                result["full"]["errors"].append(str(exc))
     else:
         logger.info("Full maintenance skipped: outside 3 AM UTC window")
 

@@ -218,6 +218,10 @@ class FullpitchAPI:
         envelope = self._get("videos", {"limit": limit})
         return envelope.get("data", [])
 
+    def get_videos(self, limit: int = 200, page: int = 1) -> dict[str, Any]:
+        """GET /api/v1/videos — video envelope with pagination metadata."""
+        return self._get("videos", {"limit": limit, "page": page})
+
     # ── WRITE methods ─────────────────────────────────────────────────────
 
     def upsert_match(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -254,6 +258,11 @@ class FullpitchAPI:
         """POST /api/v1/ingest/video — create video (skips duplicates by videoId)."""
         logger.info("Creating video: %s", data.get("title", "?")[:80])
         return self._post("video", data)
+
+    def update_video(self, video_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """PATCH /api/v1/videos/[id] — protected partial video update."""
+        logger.info("Updating video %s: %s", video_id, ", ".join(data.keys()))
+        return self._patch(f"videos/{video_id}", data)
 
     def upsert_player(self, data: dict[str, Any]) -> dict[str, Any]:
         """POST /api/v1/ingest/player — idempotent player upsert."""
