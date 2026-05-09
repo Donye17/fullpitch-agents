@@ -181,6 +181,52 @@ def _parse_live_score(text: str, home_abbr: str, away_abbr: str) -> tuple[int, i
     return None
 
 
+def _scoreboard_texts(soup: BeautifulSoup) -> list[str]:
+    texts: list[str] = []
+    for selector in (
+        "[class*='score']",
+        "[id*='score']",
+        "[class*='scoreboard']",
+        "[id*='scoreboard']",
+        "[class*='match-header']",
+        "[class*='match-score']",
+    ):
+        for node in soup.select(selector):
+            text = " ".join(node.get_text(" ", strip=True).split())
+            if text and text not in texts:
+                texts.append(text)
+    return texts
+
+
+def _team_score_context(lines: list[str], match: dict[str, Any]) -> str:
+    home_terms = {
+        _lookup_key(_match_team_name(match, "home")),
+        _lookup_key(_match_team_abbr(match, "home")),
+    }
+    away_terms = {
+        _lookup_key(_match_team_name(match, "away")),
+        _lookup_key(_match_team_abbr(match, "away")),
+    }
+    home_terms.discard("")
+    away_terms.discard("")
+
+    home_indexes: list[int] = []
+    away_indexes: list[int] = []
+    for index, line in enumerate(lines[:160]):
+        key = _lookup_key(line)
+        if any(term and (key == term or term in key or key in term) for term in home_terms):
+            home_indexes.append(index)
+        if any(term and (key == term or term in key or key in term) for term in away_terms):
+            away_indexes.append(index)
+
+    if not home_indexes or not away_indexes:
+        return ""
+
+    start = max(min(home_indexes[0], away_indexes[0]) - 12, 0)
+    end = min(max(home_indexes[-1], away_indexes[-1]) + 13, len(lines))
+    return " ".join(lines[start:end])
+
+
 def _header_lines(lines: list[str]) -> list[str]:
     stop_labels = {"Preview", "Head to head", "Stats", "Highlights", "Match Preview", "Lineups"}
     header: list[str] = []
@@ -306,10 +352,35 @@ def _parse_mlr_match_page(html: str, match: dict[str, Any]) -> dict[str, Any]:
     soup = BeautifulSoup(html, "html.parser")
     lines = _text_lines(soup)
     text = " ".join(lines)
+    logger.info(
+        "MLR match page text length=%d first500=%r",
+        len(text),
+        text[:500],
+    )
     header_text = " ".join(_header_lines(lines))
-    score = _parse_live_score(header_text, _match_team_abbr(match, "home"), _match_team_abbr(match, "away"))
+    home_abbr = _match_team_abbr(match, "home")
+    away_abbr = _match_team_abbr(match, "away")
+    contexts = [
+        *_scoreboard_texts(soup),
+        _team_score_context(lines, match),
+        header_text,
+    ]
+    score = next(
+        (
+            parsed
+            for context in contexts
+            if context
+            for parsed in [_parse_live_score(context, home_abbr, away_abbr)]
+            if parsed
+        ),
+        None,
+    )
+    status = _parse_live_status(text)
+    kickoff = _parse_match_datetime(match.get("kickoffTime"))
+    if score and status == "scheduled" and kickoff and kickoff <= datetime.now(timezone.utc):
+        status = "live"
     return {
-        "status": _parse_live_status(text),
+        "status": status,
         "score": score,
         "lineups": _parse_lineups(soup, match),
     }
