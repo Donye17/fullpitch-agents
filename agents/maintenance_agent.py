@@ -25,6 +25,7 @@ from tools.scraper import (
     fetch_text,
     gemini_summarize,
 )
+from tools.youtube_channels import approved_channel_terms, is_approved_youtube_channel
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +104,21 @@ def _is_junk_title(value: str | None) -> bool:
 
 
 def _is_spam_video_source(video: dict[str, Any]) -> bool:
-    source_name = _unescape_text(
-        video.get("sourceName") or video.get("channelName") or video.get("source") or ""
-    )
-    return any(pattern.search(source_name) for pattern in SPAM_VIDEO_SOURCE_PATTERNS)
+    source_names = [
+        _unescape_text(video.get("sourceName")),
+        _unescape_text(video.get("channelName")),
+        _unescape_text(video.get("source")),
+    ]
+    return any(pattern.search(source_name) for source_name in source_names for pattern in SPAM_VIDEO_SOURCE_PATTERNS)
+
+
+def _is_unapproved_video_source(video: dict[str, Any], approved_channels: set[str]) -> bool:
+    source_names = [
+        _unescape_text(video.get("sourceName")),
+        _unescape_text(video.get("channelName")),
+        _unescape_text(video.get("source")),
+    ]
+    return not any(is_approved_youtube_channel(source_name, approved_channels) for source_name in source_names)
 
 
 def _needs_summary_repair(value: Any) -> bool:
@@ -383,11 +395,11 @@ def _run_mode(
     return summary
 
 
-def _repair_video(video: dict[str, Any], api: FullpitchAPI) -> dict[str, int]:
-    if _is_spam_video_source(video):
+def _repair_video(video: dict[str, Any], api: FullpitchAPI, approved_channels: set[str]) -> dict[str, int]:
+    if _is_spam_video_source(video) or _is_unapproved_video_source(video, approved_channels):
         api.delete_video(video["id"])
         logger.info(
-            "Full maintenance: deleted spam video source %s",
+            "Full maintenance: deleted unapproved video source %s",
             video.get("sourceName") or video.get("channelName") or video.get("source") or video.get("id"),
         )
         return {"fixed": 0, "deleted": 1}
@@ -438,11 +450,13 @@ def run_maintenance_agent() -> dict[str, Any]:
             )
             try:
                 full_videos = _all_videos(api)
+                youtube_sources = api.get_sources(type="youtube")
+                approved_channels = approved_channel_terms(youtube_sources)
                 video_titles_fixed = 0
                 videos_deleted = 0
                 for video in full_videos:
                     try:
-                        video_result = _repair_video(video, api)
+                        video_result = _repair_video(video, api, approved_channels)
                         video_titles_fixed += video_result["fixed"]
                         videos_deleted += video_result["deleted"]
                     except Exception as exc:

@@ -20,6 +20,7 @@ import httpx
 from tools.college_leagues import classify_college_league, decode_html
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import ScraperError, fetch_html
+from tools.youtube_channels import approved_channel_terms, is_approved_youtube_channel
 
 logger = logging.getLogger(__name__)
 
@@ -74,25 +75,6 @@ def _parse_iso_date(text: str) -> datetime | None:
         except ValueError:
             continue
     return None
-
-
-def _normalize_channel_name(value: str | None) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
-
-
-def _allowed_youtube_channels(sources: list[dict[str, Any]]) -> set[str]:
-    channels: set[str] = set()
-    for source in sources:
-        for key in ("name", "url"):
-            normalized = _normalize_channel_name(source.get(key))
-            if normalized and not normalized.startswith(("http ", "https ", "www youtube")):
-                channels.add(normalized)
-    return channels
-
-
-def _is_allowed_source_channel(channel: str, allowed_channels: set[str]) -> bool:
-    normalized = _normalize_channel_name(channel)
-    return bool(normalized and normalized in allowed_channels)
 
 
 def _is_spam_channel(channel: str, title: str = "", description: str = "") -> bool:
@@ -311,7 +293,7 @@ def run_video_agent() -> dict[str, Any]:
         summary["errors"].append(str(exc))
         return summary
 
-    allowed_channels = _allowed_youtube_channels(youtube_sources)
+    allowed_channels = approved_channel_terms(youtube_sources)
     if not allowed_channels:
         logger.error("No approved YouTube channels configured in sources table")
         summary["errors"].append("No approved YouTube channels configured")
@@ -364,7 +346,7 @@ def run_video_agent() -> dict[str, Any]:
             summary["skipped_small_channel"] += 1
             continue
 
-        if not _is_allowed_source_channel(channel, allowed_channels):
+        if not is_approved_youtube_channel(channel, allowed_channels):
             logger.info("Skipping unapproved YouTube channel: %s", channel or "unknown")
             summary["skipped_unapproved_channel"] += 1
             continue

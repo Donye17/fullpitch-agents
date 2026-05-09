@@ -276,11 +276,67 @@ def _team_score_context(lines: list[str], match: dict[str, Any]) -> str:
     return " ".join(lines[start:end])
 
 
+def _debug_numbers_near_team_names(lines: list[str], match: dict[str, Any]) -> tuple[list[str], str]:
+    context = _team_score_context(_pre_history_lines(lines), match)
+    if not context:
+        return [], ""
+    numbers = re.findall(r"(?<!\d)\d{1,3}(?!\d)", context)
+    return numbers, context
+
+
+def _log_score_pattern(pattern_name: str, score: tuple[int, int] | None, context: str) -> None:
+    logger.info(
+        "MLR score pattern %s found=%s context=%r",
+        pattern_name,
+        score,
+        context[:300],
+    )
+
+
 def _extract_current_score(lines: list[str], match: dict[str, Any]) -> tuple[tuple[int, int] | None, str, str]:
     home_abbr = _match_team_abbr(match, "home")
     away_abbr = _match_team_abbr(match, "away")
     live_lines = _pre_history_lines(lines)
     live_text = " ".join(live_lines)
+    top_text = live_text[:500]
+
+    free_jacks_match = re.search(r"Free Jacks\D+(\d{1,3})\D+(\d{1,3})\D+California", live_text, re.IGNORECASE)
+    free_jacks_score = (
+        (int(free_jacks_match.group(1)), int(free_jacks_match.group(2)))
+        if free_jacks_match
+        else None
+    )
+    _log_score_pattern(
+        "free-jacks-california",
+        free_jacks_score,
+        live_text[max((free_jacks_match.start() if free_jacks_match else 0) - 80, 0) : (free_jacks_match.end() if free_jacks_match else 0) + 80],
+    )
+    if free_jacks_score:
+        return free_jacks_score, "free-jacks-california-pattern", free_jacks_match.group(0)
+
+    dash_match = re.search(r"\b(\d{1,3})\s*[-–]\s*(\d{1,3})\b", live_text)
+    dash_score = (int(dash_match.group(1)), int(dash_match.group(2))) if dash_match else None
+    _log_score_pattern(
+        "first-dash-score",
+        dash_score,
+        live_text[max((dash_match.start() if dash_match else 0) - 80, 0) : (dash_match.end() if dash_match else 0) + 80],
+    )
+    if dash_score:
+        return dash_score, "first-pre-history-dash-score", dash_match.group(0)
+
+    standalone_match = re.search(r"(?<!\d)(\d{1,3})(?!\d)\D+(?<!\d)(\d{1,3})(?!\d)", top_text)
+    standalone_score = (
+        (int(standalone_match.group(1)), int(standalone_match.group(2)))
+        if standalone_match
+        else None
+    )
+    _log_score_pattern(
+        "top-500-standalone-numbers",
+        standalone_score,
+        top_text[max((standalone_match.start() if standalone_match else 0) - 80, 0) : (standalone_match.end() if standalone_match else 0) + 80],
+    )
+    if standalone_score:
+        return standalone_score, "top-500-standalone-numbers", standalone_match.group(0)
 
     clock_context = _clock_score_context(live_lines)
     if clock_context:
@@ -297,12 +353,6 @@ def _extract_current_score(lines: list[str], match: dict[str, Any]) -> tuple[tup
         score = _parse_live_score(team_context, home_abbr, away_abbr)
         if score:
             return score, "team-nearby-section", team_context
-
-    score = _parse_live_score(live_text, home_abbr, away_abbr)
-    if score:
-        score_match = re.search(r"\b\d{1,3}\s*[-–]\s*\d{1,3}\b", live_text)
-        context = live_text[max((score_match.start() if score_match else 0) - 160, 0) : (score_match.end() if score_match else 0) + 160]
-        return score, "first-pre-history-dash-score", context
 
     return None, "none", ""
 
@@ -422,10 +472,12 @@ def _parse_mlr_match_page(html: str, match: dict[str, Any]) -> dict[str, Any]:
     soup = BeautifulSoup(html, "html.parser")
     lines = _text_lines(soup)
     text = " ".join(lines)
+    numbers_near_teams, team_number_context = _debug_numbers_near_team_names(lines, match)
+    logger.info("MLR match page text length=%d first200=%r", len(text), text[:200])
     logger.info(
-        "MLR match page text length=%d first500=%r",
-        len(text),
-        text[:500],
+        "MLR numbers near team names numbers=%s context=%r",
+        numbers_near_teams,
+        team_number_context[:500],
     )
     score, score_source, score_context = _extract_current_score(lines, match)
     logger.info(
