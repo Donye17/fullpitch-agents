@@ -10,13 +10,18 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+from tools.article_filter import (
+    has_minimum_content,
+    is_category_or_tag_url,
+    is_viable_article_candidate,
+    looks_like_article_url,
+)
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import (
     ScraperError,
@@ -163,6 +168,8 @@ def _extract_articles_from_html(soup, base_url: str) -> list[dict[str, Any]]:
                 title = heading.get_text(strip=True)
         if not title or len(title) < 10:
             continue
+        if not is_viable_article_candidate(title=title, url=full_url):
+            continue
 
         date_text = ""
         time_el = tag.find_parent().select_one("time, .date, [class*='date']") if tag.find_parent() else None
@@ -187,6 +194,9 @@ def _extract_articles_from_html(soup, base_url: str) -> list[dict[str, Any]]:
 
 def _looks_like_article_url(url: str, base_url: str) -> bool:
     """Heuristic: does this URL look like a news article?"""
+    if not looks_like_article_url(url):
+        return False
+
     parsed = urlparse(url)
     path = parsed.path.lower()
 
@@ -195,17 +205,13 @@ def _looks_like_article_url(url: str, base_url: str) -> bool:
         "/signup", "/subscribe", "/contact", "/about", "/privacy",
         "/terms", "/search", "/cart", "/shop",
     )
-    if any(p in path for p in skip_patterns):
+    if any(p in path for p in skip_patterns) or is_category_or_tag_url(url):
         return False
 
     if path in ("/", "/news", "/news/", ""):
         return False
 
-    parts = [p for p in path.split("/") if p]
-    if len(parts) >= 2:
-        return True
-
-    return bool(re.search(r"\d", path) or len(path) > 15)
+    return True
 
 
 def _parse_date(text: str) -> datetime | None:
@@ -284,15 +290,13 @@ def run_news_agent() -> dict[str, Any]:
             if article_url in existing_urls:
                 summary["skipped_duplicate"] += 1
                 continue
+            if not is_viable_article_candidate(title=art["title"], url=article_url):
+                summary["skipped_irrelevant"] += 1
+                continue
 
             pub_date = _parse_date(art["date_text"])
             if pub_date and pub_date < cutoff:
                 continue
-
-            if needs_filter:
-                if not _is_us_rugby(art["title"], genai_client):
-                    summary["skipped_irrelevant"] += 1
-                    continue
 
             image_url = None
             published_date = None
@@ -304,6 +308,16 @@ def run_news_agent() -> dict[str, Any]:
                 article_text = extract_page_text_from_html(article_html) or article_text
             except ScraperError as exc:
                 logger.warning("Failed to fetch article metadata from %s: %s", article_url, exc)
+
+            if not has_minimum_content(article_text, min_chars=100):
+                logger.info("Skipping article with too little extracted content: %s", art["title"][:80])
+                summary["skipped_irrelevant"] += 1
+                continue
+
+            if needs_filter:
+                if not _is_us_rugby(art["title"], genai_client):
+                    summary["skipped_irrelevant"] += 1
+                    continue
 
             article_summary = gemini_summarize(article_url, article_text) or _generate_summary(
                 art["title"], article_text, _domain(url), genai_client

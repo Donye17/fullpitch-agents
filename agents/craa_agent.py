@@ -15,10 +15,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+from tools.article_filter import has_minimum_content, is_viable_article_candidate, looks_like_article_url
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import (
     ScraperError,
     extract_og_image_from_html,
+    extract_page_text_from_html,
     extract_publish_date,
     fetch_html,
     fetch_text,
@@ -151,13 +153,9 @@ def _article_title_from_link(link) -> str:
 
 def _looks_like_news_url(url: str) -> bool:
     parsed = urlparse(url)
-    path = parsed.path.lower()
     if parsed.netloc and parsed.netloc != "craa.rugby":
         return False
-    if path in ("", "/", "/news-events/", "/linkhub/"):
-        return False
-    skip = ("/tag/", "/category/", "/author/", "/wp-content/", "/privacy", "/contact")
-    return not any(item in path for item in skip)
+    return looks_like_article_url(url)
 
 
 def _extract_news_articles(soup, base_url: str) -> list[dict[str, str]]:
@@ -175,7 +173,7 @@ def _extract_news_articles(soup, base_url: str) -> list[dict[str, str]]:
         if url in seen or not _looks_like_news_url(url):
             continue
         title = _article_title_from_link(link)
-        if len(title) < 10:
+        if not is_viable_article_candidate(title=title, url=url):
             continue
         parent = link.find_parent()
         date_el = parent.select_one("time, .date, [class*='date']") if parent else None
@@ -204,7 +202,7 @@ def _extract_power_rankings(soup, base_url: str) -> list[dict[str, str]]:
         if not href:
             continue
         url = urljoin(base_url, href)
-        if not _looks_like_news_url(url):
+        if not _looks_like_news_url(url) or not is_viable_article_candidate(title=text, url=url):
             continue
         rankings.append({"title": text, "url": url, "date_text": "", "summary": "Latest CRAA D1A power rankings."})
     unique = {item["url"]: item for item in rankings}
@@ -285,9 +283,14 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
 
     image_url = extract_og_image_from_html(html, article["url"]) if html else None
     published_date = (extract_publish_date(html) if html else None) or _parse_date(article.get("date_text"))
-    article_summary = article.get("summary") or ""
-    league = _classify_article(article["title"], article_summary, client)
-    article_summary = _generate_summary(article["title"], article_summary, _domain(article["url"]), client)
+    article_text = extract_page_text_from_html(html) if html else ""
+    if not has_minimum_content(article_text, min_chars=100):
+        logger.info("Skipping CRAA article with too little extracted content: %s", article["title"][:80])
+        summary["articles_skipped"] += 1
+        return
+
+    league = _classify_article(article["title"], article_text, client)
+    article_summary = _generate_summary(article["title"], article_text, _domain(article["url"]), client)
 
     try:
         api.create_article(
@@ -298,7 +301,7 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
                 "publishedDate": published_date,
                 "league": league,
                 "summary": article_summary,
-                "content": article.get("summary") or None,
+                "content": article_text[:2000] or None,
                 "imageUrl": image_url,
                 "agentName": "craa-agent",
                 "tags": [league, "craa"] if league else ["craa"],
@@ -351,6 +354,7 @@ def run_craa_agent() -> dict[str, Any]:
     summary: dict[str, Any] = {
         "articles_found": 0,
         "articles_written": 0,
+        "articles_skipped": 0,
         "rankings_found": 0,
         "matches_found": 0,
         "matches_written": 0,
