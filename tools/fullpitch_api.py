@@ -98,6 +98,25 @@ class FullpitchAPI:
         envelope = self._get("matches", params)
         return envelope.get("data", [])
 
+    def get_matches(
+        self,
+        league: str | None = None,
+        season: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> list[dict[str, Any]]:
+        """GET /api/v1/matches — match list with common filters."""
+        params: dict[str, Any] = {"limit": limit, "page": page}
+        if league:
+            params["league"] = league
+        if season:
+            params["season"] = season
+        if status:
+            params["status"] = status
+        envelope = self._get("matches", params)
+        return envelope.get("data", [])
+
     def get_team(
         self, name: str | None = None, id: str | None = None
     ) -> dict[str, Any] | None:
