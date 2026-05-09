@@ -32,15 +32,22 @@ def _current_season() -> str:
     return MLR_SEASON if now.year <= 2026 else str(now.year)
 
 
-def _fetch_mlr_fixtures() -> list[dict[str, Any]]:
-    soup = fetch_narugbydb_html(MLR_FIXTURES_URL)
+def _data_source_urls(api: FullpitchAPI) -> tuple[str, str]:
+    sources = api.get_sources(league="mlr", type="data")
+    fixtures_url = next((s["url"] for s in sources if "fixture" in s.get("name", "").lower()), MLR_FIXTURES_URL)
+    standings_url = next((s["url"] for s in sources if "standing" in s.get("name", "").lower()), MLR_STANDINGS_URL)
+    return fixtures_url, standings_url
+
+
+def _fetch_mlr_fixtures(url: str) -> list[dict[str, Any]]:
+    soup = fetch_narugbydb_html(url)
     matches = parse_fixtures_page(soup)
     logger.info("Parsed %d MLR fixtures/results from NA Rugby DB", len(matches))
     return matches
 
 
-def _fetch_mlr_standings() -> list[dict[str, Any]]:
-    soup = fetch_narugbydb_html(MLR_STANDINGS_URL)
+def _fetch_mlr_standings(url: str) -> list[dict[str, Any]]:
+    soup = fetch_narugbydb_html(url)
     standings = parse_standings_table(soup)
     logger.info("Parsed %d MLR standings rows from NA Rugby DB", len(standings))
     return standings
@@ -127,6 +134,7 @@ def run_mlr_agent() -> dict[str, Any]:
     """Run the MLR agent against NA Rugby DB."""
     api = FullpitchAPI()
     season = _current_season()
+    fixtures_url, standings_url = _data_source_urls(api)
     summary: dict[str, Any] = {
         "matches_found": 0,
         "matches_added": 0,
@@ -135,14 +143,14 @@ def run_mlr_agent() -> dict[str, Any]:
     }
 
     try:
-        _ingest_matches(api, season, _fetch_mlr_fixtures(), summary)
+        _ingest_matches(api, season, _fetch_mlr_fixtures(fixtures_url), summary)
     except ScraperError as exc:
         msg = f"Failed to fetch MLR fixtures from NA Rugby DB: {exc}"
         logger.error(msg)
         summary["errors"].append(msg)
 
     try:
-        _ingest_standings(api, season, _fetch_mlr_standings(), summary)
+        _ingest_standings(api, season, _fetch_mlr_standings(standings_url), summary)
     except ScraperError as exc:
         msg = f"Failed to fetch MLR standings from NA Rugby DB: {exc}"
         logger.error(msg)

@@ -55,7 +55,7 @@ class FullpitchAPI:
         return {"Authorization": f"Bearer {self.api_key}"}
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        url = f"/api/v1/{path}"
+        url = path if path.startswith("/api/") else f"/api/v1/{path.lstrip('/')}"
         logger.info("GET %s%s %s", self.base_url, url, params or "")
         resp = self._client.get(url, params=params)
         if resp.status_code != 200:
@@ -158,6 +158,18 @@ class FullpitchAPI:
         if season:
             params["season"] = season
         envelope = self._get("standings", params or None)
+        return envelope.get("data", [])
+
+    def get_sources(
+        self, league: str | None = None, type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """GET /api/v1/sources — active source records, optionally filtered."""
+        params: dict[str, Any] = {}
+        if league:
+            params["league"] = league
+        if type:
+            params["type"] = type
+        envelope = self._get("/api/v1/sources", params or None)
         return envelope.get("data", [])
 
     def get_recent_articles(self, limit: int = 20) -> list[dict[str, Any]]:

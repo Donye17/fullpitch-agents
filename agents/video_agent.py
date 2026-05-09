@@ -27,14 +27,6 @@ GEMINI_REASONING = "gemini-2.5-flash"
 MAX_AGE_DAYS = 30
 QUERY_DELAY_SECONDS = 0.5
 
-SEARCH_QUERIES = [
-    "MLR Major League Rugby highlights 2026",
-    "USA Eagles rugby 2026",
-    "college rugby highlights 2026",
-    "US club rugby 2026",
-    "Major League Rugby 2026",
-]
-
 MLR_TEAM_KEYWORDS = [
     "chicago hounds", "dallas jackals", "houston sabercats",
     "miami sharks", "new england free jacks", "new orleans gold",
@@ -243,7 +235,17 @@ def run_video_agent() -> dict[str, Any]:
 
     all_videos: list[dict[str, Any]] = []
 
-    for query in SEARCH_QUERIES:
+    try:
+        youtube_sources = api.get_sources(type="youtube")
+    except FullpitchAPIError as exc:
+        logger.error("Failed to fetch YouTube sources from Fullpitch API: %s", exc)
+        summary["errors"].append(str(exc))
+        return summary
+
+    for source in youtube_sources:
+        query = source.get("name") or source.get("url")
+        if not query:
+            continue
         logger.info("Searching YouTube: '%s'", query)
         if use_api:
             results = _search_youtube_api(query, yt_api_key)

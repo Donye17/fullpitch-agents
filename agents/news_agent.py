@@ -41,13 +41,6 @@ GEMINI_WRITING_MID = "gemini-2.5-flash"
 
 MAX_AGE_DAYS = 7
 
-WEB_SOURCES: list[dict[str, Any]] = [
-    {"url": "https://www.majorleague.rugby/news"},
-    {"url": "https://www.usa.rugby/news"},
-    {"url": "https://www.rugbypass.com/news", "filter": True},
-    {"url": "https://www.ultimaterugby.com", "filter": True},
-]
-
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
@@ -261,12 +254,19 @@ def run_news_agent() -> dict[str, Any]:
     except FullpitchAPIError as exc:
         logger.warning("Failed to fetch existing articles: %s", exc)
 
+    try:
+        web_sources = api.get_sources(type="news")
+    except FullpitchAPIError as exc:
+        logger.error("Failed to fetch news sources from Fullpitch API: %s", exc)
+        summary["errors"].append(str(exc))
+        return summary
+
     # ── Web sources ───────────────────────────────────────────────────────
 
-    for src in WEB_SOURCES:
+    for src in web_sources:
         url = src["url"]
         league = src.get("league")
-        needs_filter = src.get("filter", False)
+        needs_filter = league == "general"
 
         try:
             logger.info("Fetching web source: %s", url)

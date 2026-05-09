@@ -20,6 +20,7 @@ from tools.article_filter import has_minimum_content, is_viable_article_candidat
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import (
     ScraperError,
+    extract_og_image,
     extract_og_image_from_html,
     extract_page_text_from_html,
     extract_publish_date,
@@ -68,6 +69,17 @@ def _domain(url: str) -> str:
 
 def _clean_entity_text(value: str | None) -> str:
     return clean_text(html_lib.unescape(value or ""))
+
+
+def _craa_sources(api: FullpitchAPI) -> tuple[str, str, str]:
+    sources = [
+        source
+        for source in api.get_sources(league="college")
+        if "craa" in source.get("name", "").lower()
+    ]
+    news_url = next((s["url"] for s in sources if s.get("type") == "news"), CRAA_NEWS_URL)
+    data_url = next((s["url"] for s in sources if s.get("type") == "data"), CRAA_LINKHUB_URL)
+    return news_url, data_url, CRAA_HOME_URL
 
 
 def _parse_date(text: str | None) -> str | None:
@@ -287,6 +299,8 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
         html = ""
 
     image_url = extract_og_image_from_html(html, article["url"]) if html else None
+    if not image_url:
+        image_url = extract_og_image(article["url"])
     published_date = (extract_publish_date(html) if html else None) or _parse_date(article.get("date_text"))
     article_text = extract_page_text_from_html(html) if html else ""
     if not has_minimum_content(article_text, min_chars=100):
@@ -358,6 +372,7 @@ def run_craa_agent() -> dict[str, Any]:
     api = FullpitchAPI()
     client = _get_genai_client()
     season = _current_season()
+    news_url, linkhub_url, home_url = _craa_sources(api)
     summary: dict[str, Any] = {
         "articles_found": 0,
         "articles_written": 0,
@@ -377,8 +392,8 @@ def run_craa_agent() -> dict[str, Any]:
         logger.warning("Failed to fetch recent articles before CRAA ingest: %s", exc)
 
     try:
-        news_soup = fetch_html(CRAA_NEWS_URL)
-        articles = _extract_news_articles(news_soup, CRAA_NEWS_URL)
+        news_soup = fetch_html(news_url)
+        articles = _extract_news_articles(news_soup, news_url)
         summary["articles_found"] = len(articles)
         for article in articles:
             if article["url"] in existing_urls:
@@ -391,8 +406,8 @@ def run_craa_agent() -> dict[str, Any]:
         summary["errors"].append(msg)
 
     try:
-        home_soup = fetch_html(CRAA_HOME_URL)
-        rankings = _extract_power_rankings(home_soup, CRAA_HOME_URL)
+        home_soup = fetch_html(home_url)
+        rankings = _extract_power_rankings(home_soup, home_url)
         summary["rankings_found"] = len(rankings)
         for ranking in rankings:
             if ranking["url"] in existing_urls:
@@ -406,7 +421,7 @@ def run_craa_agent() -> dict[str, Any]:
         summary["errors"].append(msg)
 
     try:
-        results_soup = fetch_html(CRAA_LINKHUB_URL)
+        results_soup = fetch_html(linkhub_url)
         results = _extract_results(results_soup)
         summary["matches_found"] = len(results)
         for result in results:
