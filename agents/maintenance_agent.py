@@ -42,6 +42,13 @@ JUNK_TITLES = {
     "find a program",
     "youth & high school",
 }
+SPAM_VIDEO_SOURCE_PATTERNS = (
+    re.compile(r"\bhdq\b", re.I),
+    re.compile(r"\bgaming\b", re.I),
+    re.compile(r"\bjornada\b", re.I),
+    re.compile(r"\blive\s*c1\b", re.I),
+    re.compile(r"\bh&n\b", re.I),
+)
 
 TITLE_LEAGUE_RULES = (
     (re.compile(r"\b(craa|ncr|nira|d1a|d1-aa|d1aa|division\s+i|division\s+ii|division\s+iii)\b", re.I), "college"),
@@ -93,6 +100,13 @@ def _unescape_text(value: str | None) -> str:
 
 def _is_junk_title(value: str | None) -> bool:
     return _unescape_text(value).lower() in JUNK_TITLES
+
+
+def _is_spam_video_source(video: dict[str, Any]) -> bool:
+    source_name = _unescape_text(
+        video.get("sourceName") or video.get("channelName") or video.get("source") or ""
+    )
+    return any(pattern.search(source_name) for pattern in SPAM_VIDEO_SOURCE_PATTERNS)
 
 
 def _needs_summary_repair(value: Any) -> bool:
@@ -369,15 +383,23 @@ def _run_mode(
     return summary
 
 
-def _repair_video_title(video: dict[str, Any], api: FullpitchAPI) -> bool:
+def _repair_video(video: dict[str, Any], api: FullpitchAPI) -> dict[str, int]:
+    if _is_spam_video_source(video):
+        api.delete_video(video["id"])
+        logger.info(
+            "Full maintenance: deleted spam video source %s",
+            video.get("sourceName") or video.get("channelName") or video.get("source") or video.get("id"),
+        )
+        return {"fixed": 0, "deleted": 1}
+
     raw_title = video.get("title") or ""
     title = _unescape_text(raw_title)
     if not title or title == raw_title:
-        return False
+        return {"fixed": 0, "deleted": 0}
 
     api.update_video(video["id"], {"title": title})
     logger.info("Full maintenance: fixed title for video %s", title)
-    return True
+    return {"fixed": 1, "deleted": 0}
 
 
 def run_maintenance_agent() -> dict[str, Any]:
@@ -417,16 +439,19 @@ def run_maintenance_agent() -> dict[str, Any]:
             try:
                 full_videos = _all_videos(api)
                 video_titles_fixed = 0
+                videos_deleted = 0
                 for video in full_videos:
                     try:
-                        if _repair_video_title(video, api):
-                            video_titles_fixed += 1
+                        video_result = _repair_video(video, api)
+                        video_titles_fixed += video_result["fixed"]
+                        videos_deleted += video_result["deleted"]
                     except Exception as exc:
                         title = video.get("title") or video.get("id") or "unknown"
                         logger.exception("Video title maintenance failed for %s", title)
                         result["full"]["errors"].append(f"video {title}: {exc}")
                     time.sleep(REQUEST_DELAY_SECONDS)
                 result["full"]["video_titles_fixed"] = video_titles_fixed
+                result["full"]["videos_deleted"] = videos_deleted
             except FullpitchAPIError as exc:
                 logger.error("Failed to fetch all videos for full maintenance: %s", exc)
                 result["full"]["errors"].append(str(exc))

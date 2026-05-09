@@ -37,6 +37,16 @@ MLR_TEAM_KEYWORDS = [
 ]
 
 YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/search"
+SPAM_CHANNEL_PATTERNS = (
+    re.compile(r"\blive\s*c\d+\b", re.IGNORECASE),
+    re.compile(r"\bhdq\b", re.IGNORECASE),
+    re.compile(r"\bgaming\b", re.IGNORECASE),
+    re.compile(r"\bjornada\b", re.IGNORECASE),
+)
+RUGBY_CONTEXT_RE = re.compile(
+    r"\b(rugby|mlr|major league rugby|usa rugby|eagles|craa|ncr|nira|wer|women'?s elite rugby)\b",
+    re.IGNORECASE,
+)
 
 
 def _get_genai_client():
@@ -63,6 +73,45 @@ def _parse_iso_date(text: str) -> datetime | None:
             return dt
         except ValueError:
             continue
+    return None
+
+
+def _normalize_channel_name(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _allowed_youtube_channels(sources: list[dict[str, Any]]) -> set[str]:
+    channels: set[str] = set()
+    for source in sources:
+        for key in ("name", "url"):
+            normalized = _normalize_channel_name(source.get(key))
+            if normalized and not normalized.startswith(("http ", "https ", "www youtube")):
+                channels.add(normalized)
+    return channels
+
+
+def _is_allowed_source_channel(channel: str, allowed_channels: set[str]) -> bool:
+    normalized = _normalize_channel_name(channel)
+    return bool(normalized and normalized in allowed_channels)
+
+
+def _is_spam_channel(channel: str, title: str = "", description: str = "") -> bool:
+    if any(pattern.search(channel) for pattern in SPAM_CHANNEL_PATTERNS):
+        return True
+
+    if re.search(r"\boutdoors\b", channel, re.IGNORECASE):
+        return not RUGBY_CONTEXT_RE.search(f"{channel} {title} {description}")
+
+    return False
+
+
+def _subscriber_count(video: dict[str, Any]) -> int | None:
+    value = video.get("subscriberCount")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        digits = re.sub(r"[^\d]", "", value)
+        return int(digits) if digits else None
     return None
 
 
@@ -236,6 +285,9 @@ def run_video_agent() -> dict[str, Any]:
         "skipped_duplicate": 0,
         "skipped_irrelevant": 0,
         "skipped_old": 0,
+        "skipped_spam_channel": 0,
+        "skipped_unapproved_channel": 0,
+        "skipped_small_channel": 0,
         "written": 0,
         "errors": [],
     }
@@ -257,6 +309,12 @@ def run_video_agent() -> dict[str, Any]:
     except FullpitchAPIError as exc:
         logger.error("Failed to fetch YouTube sources from Fullpitch API: %s", exc)
         summary["errors"].append(str(exc))
+        return summary
+
+    allowed_channels = _allowed_youtube_channels(youtube_sources)
+    if not allowed_channels:
+        logger.error("No approved YouTube channels configured in sources table")
+        summary["errors"].append("No approved YouTube channels configured")
         return summary
 
     for source in youtube_sources:
@@ -294,6 +352,22 @@ def run_video_agent() -> dict[str, Any]:
         title = decode_html(video.get("title", ""))
         description = decode_html(video.get("description", ""))
         channel = decode_html(video.get("channelName", ""))
+
+        if _is_spam_channel(channel, title, description):
+            logger.info("Skipping spam YouTube channel: %s", channel)
+            summary["skipped_spam_channel"] += 1
+            continue
+
+        subscribers = _subscriber_count(video)
+        if subscribers is not None and subscribers < 1000:
+            logger.info("Skipping small YouTube channel (%d subscribers): %s", subscribers, channel)
+            summary["skipped_small_channel"] += 1
+            continue
+
+        if not _is_allowed_source_channel(channel, allowed_channels):
+            logger.info("Skipping unapproved YouTube channel: %s", channel or "unknown")
+            summary["skipped_unapproved_channel"] += 1
+            continue
 
         if not _is_us_rugby_video(title, channel, genai_client):
             summary["skipped_irrelevant"] += 1
