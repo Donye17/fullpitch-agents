@@ -22,6 +22,7 @@ from agents.narugbydb import (
     resolve_team,
 )
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.match_report_generator import generate_match_report
 from tools.scraper import ScraperError, fetch_text
 
 logger = logging.getLogger(__name__)
@@ -509,7 +510,8 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
             continue
 
         try:
-            parsed = _parse_mlr_match_page(fetch_text(url, timeout=20.0), match)
+            page_html = fetch_text(url, timeout=20.0)
+            parsed = _parse_mlr_match_page(page_html, match)
         except ScraperError as exc:
             msg = f"Failed to fetch MLR match page {url}: {exc}"
             logger.warning(msg)
@@ -537,6 +539,20 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
             )
             summary["live_matches_updated"] += 1
             logger.info("Updated MLR live page score: %s %s-%s %s (%s)", _match_team_name(match, "home"), home_score, away_score, _match_team_name(match, "away"), status)
+            if status == "final":
+                generate_match_report(
+                    url,
+                    _match_team_name(match, "home"),
+                    _match_team_name(match, "away"),
+                    home_score,
+                    away_score,
+                    "mlr",
+                    api=api,
+                    page_html=page_html,
+                    week=_week_from_match(match),
+                    venue=match.get("venue"),
+                    match_id=match.get("id"),
+                )
 
         for player in parsed["lineups"]:
             try:

@@ -72,8 +72,10 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool
     from agents.mlr_agent import (
         _build_match_page_url,
         _match_team_name,
+        _week_from_match,
         _parse_mlr_match_page,
     )
+    from tools.match_report_generator import generate_match_report
     from tools.scraper import fetch_text
 
     api = api or FullpitchAPI()
@@ -86,7 +88,8 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool
         )
         return False
 
-    parsed = _parse_mlr_match_page(fetch_text(url, timeout=20.0), match)
+    page_html = fetch_text(url, timeout=20.0)
+    parsed = _parse_mlr_match_page(page_html, match)
     score = parsed["score"]
     status = parsed["status"]
     if not score or status not in {"live", "final"}:
@@ -118,6 +121,20 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool
         _match_team_name(match, "away"),
         status,
     )
+    if status == "final" and current_status != "completed":
+        generate_match_report(
+            url,
+            _match_team_name(match, "home"),
+            _match_team_name(match, "away"),
+            home_score,
+            away_score,
+            "mlr",
+            api=api,
+            page_html=page_html,
+            week=_week_from_match(match),
+            venue=match.get("venue"),
+            match_id=match.get("id"),
+        )
     return True
 
 

@@ -213,6 +213,12 @@ class FullpitchAPI:
         """GET /api/v1/articles — article envelope with pagination metadata."""
         return self._get("articles", {"limit": limit, "page": page})
 
+    def get_article_by_source_url(self, source_url: str) -> dict[str, Any] | None:
+        """GET /api/v1/articles?sourceUrl=... — find a published article by source URL."""
+        envelope = self._get("articles", {"sourceUrl": source_url, "limit": 1})
+        items = envelope.get("data", [])
+        return items[0] if items else None
+
     def get_recent_videos(self, limit: int = 20) -> list[dict[str, Any]]:
         """GET /api/v1/videos — most recent videos."""
         envelope = self._get("videos", {"limit": limit})
