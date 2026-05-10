@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlparse
 from tools.article_filter import has_minimum_content, is_viable_article_candidate, looks_like_article_url
 from tools.college_leagues import classify_college_league_with_gemini, decode_html
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL, batch_relevance_check
 from tools.scraper import (
     ScraperError,
     extract_og_image,
@@ -26,7 +27,7 @@ from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash"
+GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
 NCR_HOME_URL = "https://www.ncr.rugby"
 NCR_SCHEDULE_URL = "https://www.ncr.rugby/schedule"
 SCORE_RE = re.compile(r"(?P<home>.+?)\s+(?P<home_score>\d{1,3})\s*[–—-]\s*(?P<away_score>\d{1,3})\s+(?P<away>.+)")
@@ -54,24 +55,6 @@ def _sources(api: FullpitchAPI) -> tuple[str, str]:
 
 def _domain(url: str) -> str:
     return urlparse(url).hostname or "ncr.rugby"
-
-
-def _is_relevant(title: str, text: str, client) -> bool:
-    if client is None:
-        return True
-    try:
-        response = client.models.generate_content(
-            model=GEMINI_REASONING,
-            contents=(
-                "Is this article about National Collegiate Rugby, US college rugby, "
-                "college rugby teams, results, rankings, players, or postseason? "
-                f"Title: {title}\nText: {text[:1000]}\nAnswer YES or NO only."
-            ),
-        )
-        return response.text.strip().upper().startswith("YES")
-    except Exception:
-        logger.exception("NCR relevance check failed for %s", title[:80])
-        return False
 
 
 def _extract_articles(soup, base_url: str) -> list[dict[str, str]]:
@@ -108,10 +91,6 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
     if not has_minimum_content(text, min_chars=100):
         summary["articles_skipped"] += 1
         return
-    if not _is_relevant(article["title"], text, client):
-        summary["articles_skipped"] += 1
-        return
-
     image_url = extract_og_image_from_html(html, article["url"]) or extract_og_image(article["url"])
     title = decode_html(article["title"])
     league = classify_college_league_with_gemini(title, text, client, default="college")
@@ -213,7 +192,17 @@ def run_ncr_agent() -> dict[str, Any]:
     try:
         articles = _extract_articles(fetch_html(news_url), news_url)
         summary["articles_found"] = len(articles)
-        for article in articles:
+        relevant_indexes = batch_relevance_check(
+            articles,
+            client,
+            prompt_intro="You are filtering National Collegiate Rugby news articles.",
+            relevant_description="about National Collegiate Rugby, US college rugby teams, results, rankings, players, or postseason",
+            default_if_no_client=True,
+        )
+        for index, article in enumerate(articles):
+            if index not in relevant_indexes:
+                summary["articles_skipped"] += 1
+                continue
             _ingest_article(api, article, client, summary)
     except ScraperError as exc:
         summary["errors"].append(f"Failed to fetch NCR news: {exc}")

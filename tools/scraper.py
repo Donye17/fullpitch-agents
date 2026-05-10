@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ USER_AGENT = "Fullpitch/1.0 (fullpitch.app)"
 MAX_RETRIES = 3
 BACKOFF_BASE = 2  # seconds — retries at 2, 4, 8
 DOMAIN_DELAY_SECONDS = 2.0
-GEMINI_WRITING_MID = "gemini-2.5-flash"
+GEMINI_WRITING_MID = GEMINI_FREE_TIER_MODEL
 _domain_last_request: dict[str, float] = {}
 _domain_lock = threading.Lock()
 

@@ -24,8 +24,6 @@ from tools.youtube_channels import approved_channel_terms, is_approved_youtube_c
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash"
-
 MAX_AGE_DAYS = 30
 QUERY_DELAY_SECONDS = 0.5
 
@@ -48,14 +46,6 @@ RUGBY_CONTEXT_RE = re.compile(
     r"\b(rugby|mlr|major league rugby|usa rugby|eagles|craa|ncr|nira|wer|women'?s elite rugby)\b",
     re.IGNORECASE,
 )
-
-
-def _get_genai_client():
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        return None
-    from google import genai
-    return genai.Client(api_key=api_key)
 
 
 def _cutoff_date() -> datetime:
@@ -187,33 +177,6 @@ def _search_youtube_scrape(query: str) -> list[dict[str, Any]]:
     return videos
 
 
-# ── Classification ────────────────────────────────────────────────────────────
-
-
-def _is_us_rugby_video(title: str, channel: str, client) -> bool:
-    """Use Gemini to check if a video is about US rugby."""
-    if client is None:
-        logger.warning("No Gemini client, cannot filter video '%s'", title[:60])
-        return False
-    try:
-        resp = client.models.generate_content(
-            model=GEMINI_REASONING,
-            contents=(
-                "Is this YouTube video about US rugby, MLR, USA Eagles, "
-                "college rugby, or US club rugby? "
-                f"Title: '{title}'. Channel: '{channel}'. "
-                "Answer YES or NO only."
-            ),
-        )
-        answer = resp.text.strip().upper()
-        is_relevant = answer.startswith("YES")
-        logger.info("Video relevance: '%s' → %s", title[:60], "YES" if is_relevant else "NO")
-        return is_relevant
-    except Exception:
-        logger.exception("Gemini video classification failed for '%s'", title[:60])
-        return False
-
-
 def _classify_league(title: str, channel: str) -> str:
     """Determine league tag from title and channel name."""
     combined = f"{title} {channel}".lower()
@@ -257,7 +220,6 @@ def _classify_league(title: str, channel: str) -> str:
 def run_video_agent() -> dict[str, Any]:
     """Run the video agent: search YouTube, filter, classify, ingest."""
     api = FullpitchAPI()
-    genai_client = _get_genai_client()
     yt_api_key = os.getenv("YOUTUBE_DATA_API_KEY", "")
     cutoff = _cutoff_date()
 
@@ -265,7 +227,6 @@ def run_video_agent() -> dict[str, Any]:
         "queries_run": 0,
         "videos_found": 0,
         "skipped_duplicate": 0,
-        "skipped_irrelevant": 0,
         "skipped_old": 0,
         "skipped_spam_channel": 0,
         "skipped_unapproved_channel": 0,
@@ -351,10 +312,6 @@ def run_video_agent() -> dict[str, Any]:
             summary["skipped_unapproved_channel"] += 1
             continue
 
-        if not _is_us_rugby_video(title, channel, genai_client):
-            summary["skipped_irrelevant"] += 1
-            continue
-
         league = _classify_league(title, channel)
         published_date = (pub_date or datetime.now(timezone.utc)).isoformat()
 
@@ -379,13 +336,12 @@ def run_video_agent() -> dict[str, Any]:
             summary["errors"].append(msg)
 
     logger.info(
-        "Video agent summary: queries=%d found=%d written=%d dup=%d old=%d irrelevant=%d errors=%d",
+        "Video agent summary: queries=%d found=%d written=%d dup=%d old=%d errors=%d",
         summary["queries_run"],
         summary["videos_found"],
         summary["written"],
         summary["skipped_duplicate"],
         summary["skipped_old"],
-        summary["skipped_irrelevant"],
         len(summary["errors"]),
     )
     return summary

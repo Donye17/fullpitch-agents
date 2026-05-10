@@ -14,11 +14,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.scraper import ScraperError, fetch_html
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash"
+GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
 
 CRAA_BASE_URLS = [
     "https://www.collegiaterugby.com",

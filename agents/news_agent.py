@@ -23,6 +23,7 @@ from tools.article_filter import (
 )
 from tools.college_leagues import VALID_COLLEGE_LEAGUES, classify_college_league
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL, batch_relevance_check
 from tools.scraper import (
     ScraperError,
     extract_og_image,
@@ -37,8 +38,8 @@ from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash"
-GEMINI_WRITING_MID = "gemini-2.5-flash"
+GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
+GEMINI_WRITING_MID = GEMINI_FREE_TIER_MODEL
 
 MAX_AGE_DAYS = 7
 
@@ -56,29 +57,6 @@ def _get_genai_client():
         return None
     from google import genai
     return genai.Client(api_key=api_key)
-
-
-def _is_us_rugby(title: str, client) -> bool:
-    """Use Gemini to classify whether an article is about US rugby."""
-    if client is None:
-        logger.warning("No Gemini client — cannot filter, skipping article")
-        return False
-    try:
-        resp = client.models.generate_content(
-            model=GEMINI_REASONING,
-            contents=(
-                "Is this article primarily about US rugby — MLR, college rugby, "
-                "USA Eagles, US club rugby, or US players/coaches? "
-                f"Article title: '{title}'. Answer YES or NO only."
-            ),
-        )
-        answer = resp.text.strip().upper()
-        is_relevant = answer.startswith("YES")
-        logger.info("Relevance check: '%s' → %s", title[:80], "YES" if is_relevant else "NO")
-        return is_relevant
-    except Exception:
-        logger.exception("Gemini relevance check failed for '%s'", title[:80])
-        return False
 
 
 def _generate_summary(title: str, content: str, source: str, client) -> str | None:
@@ -280,7 +258,18 @@ def run_news_agent() -> dict[str, Any]:
             summary["errors"].append(msg)
             continue
 
-        for art in articles:
+        relevant_indexes = (
+            batch_relevance_check(
+                articles,
+                genai_client,
+                prompt_intro="You are filtering US rugby news articles.",
+                relevant_description="primarily about US rugby, MLR, college rugby, USA Eagles, US club rugby, or US players/coaches",
+            )
+            if needs_filter
+            else set(range(len(articles)))
+        )
+
+        for index, art in enumerate(articles):
             article_url = art["url"]
 
             if article_url in existing_urls:
@@ -292,6 +281,10 @@ def run_news_agent() -> dict[str, Any]:
 
             pub_date = _parse_date(art["date_text"])
             if pub_date and pub_date < cutoff:
+                continue
+
+            if index not in relevant_indexes:
+                summary["skipped_irrelevant"] += 1
                 continue
 
             image_url = None
@@ -313,14 +306,11 @@ def run_news_agent() -> dict[str, Any]:
                 summary["skipped_irrelevant"] += 1
                 continue
 
-            if needs_filter:
-                if not _is_us_rugby(art["title"], genai_client):
-                    summary["skipped_irrelevant"] += 1
-                    continue
-
-            article_summary = gemini_summarize(article_url, article_text) or _generate_summary(
-                art["title"], article_text, _domain(url), genai_client
-            )
+            article_summary = art.get("snippet") or ""
+            if not article_summary:
+                article_summary = gemini_summarize(article_url, article_text) or _generate_summary(
+                    art["title"], article_text, _domain(url), genai_client
+                )
             article_summary = _clean_entity_text(article_summary)
 
             article_league = league or _classify_league(

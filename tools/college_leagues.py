@@ -5,6 +5,8 @@ from __future__ import annotations
 import html
 import re
 
+from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
+
 VALID_COLLEGE_LEAGUES = {
     "craa-d1a",
     "craa-d1aa",
@@ -72,7 +74,7 @@ def classify_college_league_with_gemini(
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_FREE_TIER_MODEL,
             contents=(
                 "Classify this US college rugby content into exactly one league tag.\n\n"
                 "Valid tags:\n"

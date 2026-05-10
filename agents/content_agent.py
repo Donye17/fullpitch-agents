@@ -1,7 +1,7 @@
 """Content Agent — AI-written match reports, recaps, and spotlights.
 
 Schedule: Triggered by other agents after data ingest.
-Models: gemini-2.5-pro (match reports, spotlights), gemini-2.5-flash (summaries, recaps).
+Models: gemini-2.0-flash-lite for free-tier budget protection.
 Writes to: /api/v1/ingest/article
 """
 
@@ -13,12 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
 
-GEMINI_WRITING_MID = "gemini-2.5-flash"
-GEMINI_WRITING_PRO = "gemini-2.5-pro"
+GEMINI_WRITING_MID = GEMINI_FREE_TIER_MODEL
+GEMINI_WRITING_PRO = GEMINI_FREE_TIER_MODEL
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 

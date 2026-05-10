@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from tools.college_leagues import classify_college_league
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.scraper import (
     ScraperError,
     extract_og_image,
@@ -32,8 +33,9 @@ logger = logging.getLogger(__name__)
 ARTICLE_LIMIT = 200
 REQUEST_DELAY_SECONDS = 1
 FAST_MAINTENANCE_HOURS = 48
-GEMINI_REASONING = "gemini-2.5-flash"
+GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
 MIN_SUMMARY_WORDS = 150
+MAX_SUMMARY_REPAIRS_PER_RUN = 10
 JUNK_TITLES = {
     "create post",
     "find a club",
@@ -283,6 +285,7 @@ def _repair_article(
     genai_client,
     mode_label: str,
     repair_short_summary: bool,
+    allow_summary_repair: bool,
 ) -> dict[str, int]:
     raw_title = article.get("title") or "Untitled"
     title = _unescape_text(raw_title)
@@ -331,11 +334,15 @@ def _repair_article(
         if repair_short_summary
         else _is_missing(article.get("summary"))
     )
-    if summary_needs_repair and source_url:
+    summary_attempted = 0
+    if summary_needs_repair and source_url and allow_summary_repair:
         attempted.add("summary")
+        summary_attempted = 1
         summary = gemini_summarize(source_url)
         if summary:
             updates["summary"] = summary
+    elif summary_needs_repair and source_url:
+        logger.info("%s maintenance: skipped summary repair for %s because summary budget is exhausted", mode_label, title)
 
     if _is_missing(article.get("sourceDomain")) and source_url:
         attempted.add("sourceDomain")
@@ -345,13 +352,13 @@ def _repair_article(
 
     if not updates:
         logger.info("%s maintenance: complete %s", mode_label, title)
-        return {"fixed": 0, "attempted": len(attempted), "deleted": 0}
+        return {"fixed": 0, "attempted": len(attempted), "deleted": 0, "summary_attempted": summary_attempted}
 
     api.update_article(article["id"], updates)
     for field in updates:
         logger.info("%s maintenance: fixed %s for %s", mode_label, field, title)
 
-    return {"fixed": len(updates), "attempted": len(attempted), "deleted": 0}
+    return {"fixed": len(updates), "attempted": len(attempted), "deleted": 0, "summary_attempted": summary_attempted}
 
 
 def _run_mode(
@@ -361,6 +368,7 @@ def _run_mode(
     api: FullpitchAPI,
     genai_client,
     repair_short_summary: bool,
+    summary_budget: dict[str, int],
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "mode": mode_label.lower(),
@@ -368,6 +376,7 @@ def _run_mode(
         "fields_fixed": 0,
         "fields_attempted": 0,
         "articles_deleted": 0,
+        "summary_repairs_attempted": 0,
         "errors": [],
     }
 
@@ -379,11 +388,15 @@ def _run_mode(
                 genai_client,
                 mode_label,
                 repair_short_summary,
+                summary_budget["remaining"] > 0,
             )
+            summary_attempted = result.get("summary_attempted", 0)
+            summary_budget["remaining"] = max(summary_budget["remaining"] - summary_attempted, 0)
             summary["articles_checked"] += 1
             summary["fields_fixed"] += result["fixed"]
             summary["fields_attempted"] += result["attempted"]
             summary["articles_deleted"] += result.get("deleted", 0)
+            summary["summary_repairs_attempted"] += summary_attempted
         except Exception as exc:
             title = article.get("title") or article.get("id") or "unknown"
             logger.exception("Maintenance failed for %s", title)
@@ -419,6 +432,7 @@ def run_maintenance_agent() -> dict[str, Any]:
     api = FullpitchAPI()
     genai_client = _get_genai_client()
     result: dict[str, Any] = {"fast": None, "full": None}
+    summary_budget = {"remaining": MAX_SUMMARY_REPAIRS_PER_RUN}
 
     try:
         fast_articles = _recent_articles(api)
@@ -432,6 +446,7 @@ def run_maintenance_agent() -> dict[str, Any]:
             api=api,
             genai_client=genai_client,
             repair_short_summary=True,
+            summary_budget=summary_budget,
         )
 
     if is_full_maintenance_window():
@@ -447,6 +462,7 @@ def run_maintenance_agent() -> dict[str, Any]:
                 api=api,
                 genai_client=genai_client,
                 repair_short_summary=True,
+                summary_budget=summary_budget,
             )
             try:
                 full_videos = _all_videos(api)

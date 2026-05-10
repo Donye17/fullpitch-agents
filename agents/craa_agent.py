@@ -19,6 +19,7 @@ from urllib.parse import urljoin, urlparse
 from tools.article_filter import has_minimum_content, is_viable_article_candidate, looks_like_article_url
 from tools.college_leagues import classify_college_league, classify_college_league_with_gemini
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.scraper import (
     ScraperError,
     extract_og_image,
@@ -32,8 +33,8 @@ from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
 
-GEMINI_REASONING = "gemini-2.5-flash"
-GEMINI_WRITING_MID = "gemini-2.5-flash"
+GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
+GEMINI_WRITING_MID = GEMINI_FREE_TIER_MODEL
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 CRAA_HOME_URL = "https://craa.rugby/"
@@ -118,13 +119,19 @@ def _parse_date(text: str | None) -> str | None:
 
 def _classify_article(title: str, snippet: str, client) -> str:
     """Classify CRAA articles using the most specific college division tag."""
+    deterministic = classify_college_league(title, snippet, default="")
+    if deterministic:
+        return deterministic
+
     fallback_general = re.search(
         r"\b(board|committee|meeting|policy|bylaw|membership|registration|announcement|admin)\b",
         f"{title} {snippet}",
         flags=re.IGNORECASE,
     )
+    if fallback_general:
+        return "general"
     if client is None:
-        return "general" if fallback_general else classify_college_league(title, snippet, default="college")
+        return "college"
 
     try:
         response = client.models.generate_content(
@@ -317,9 +324,11 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
         return
 
     league = _classify_article(article["title"], article_text, client)
-    article_summary = _clean_entity_text(
-        _generate_summary(article["title"], article_text, _domain(article["url"]), client)
-    )
+    article_summary = _clean_entity_text(article.get("summary"))
+    if not article_summary:
+        article_summary = _clean_entity_text(
+            _generate_summary(article["title"], article_text, _domain(article["url"]), client)
+        )
 
     try:
         api.create_article(
