@@ -43,6 +43,14 @@ GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
 GEMINI_WRITING_MID = GEMINI_FREE_TIER_MODEL
 
 MAX_AGE_DAYS = 7
+HIGH_SCHOOL_KEYWORDS = (
+    "high school",
+    "girls nationals",
+    "boys nationals",
+    "youth",
+    "yhs",
+    "girls rugby national",
+)
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
@@ -89,6 +97,11 @@ def _domain(url: str) -> str:
 
 def _clean_entity_text(value: str | None) -> str:
     return clean_text(html_lib.unescape(value or ""))
+
+
+def _is_high_school_article(title: str, content: str = "") -> bool:
+    text = f"{title} {content}".lower()
+    return any(keyword in text for keyword in HIGH_SCHOOL_KEYWORDS)
 
 
 # ── HTML parsing helpers ──────────────────────────────────────────────────────
@@ -308,6 +321,12 @@ def run_news_agent() -> dict[str, Any]:
                 continue
 
             title = _clean_entity_text(art["title"])
+            is_high_school = _is_high_school_article(title, article_text)
+            if league == "high-school" and not is_high_school:
+                logger.info("Skipping non-high-school article from high-school source: %s", title[:80])
+                summary["skipped_irrelevant"] += 1
+                continue
+
             article_summary = art.get("snippet") or ""
             if not article_summary:
                 article_summary = gemini_summarize(article_url, article_text) or _generate_summary(
@@ -315,8 +334,10 @@ def run_news_agent() -> dict[str, Any]:
                 )
             article_summary = normalize_feed_summary(_clean_entity_text(article_summary))
 
-            article_league = league or _classify_league(
-                title, article_text, genai_client
+            article_league = (
+                "high-school"
+                if is_high_school
+                else league or _classify_league(title, article_text, genai_client)
             )
             title = shorten_title(title, genai_client)
 
@@ -355,6 +376,9 @@ def run_news_agent() -> dict[str, Any]:
 
 def _classify_league(title: str, content: str, client) -> str:
     """Attempt to classify which league an article belongs to via Gemini."""
+    if _is_high_school_article(title, content):
+        return "high-school"
+
     if client is None:
         return "general"
     try:
