@@ -32,18 +32,18 @@ def shorten_title(title: str, client=None) -> str:
         response = client.models.generate_content(
             model=GEMINI_FREE_TIER_MODEL,
             contents=(
-                "Rewrite this headline to 5-7 words maximum.\n"
-                "Keep the most important facts.\n"
-                "No punctuation at end. No clickbait.\n"
-                "Headline style, capitalize key words.\n\n"
+                "Rewrite this headline to exactly 5-7 words.\n"
+                "Keep the core news fact only.\n"
+                "Headline case. No punctuation at end.\n"
+                "Reply with ONLY the headline, nothing else.\n\n"
                 f"Original: {cleaned}\n\n"
-                "Reply with ONLY the shortened headline, nothing else."
             ),
         )
         shortened = _strip_trailing_punctuation(clean_text(response.text))
         if not shortened:
             return _fallback_short_title(cleaned)
-        return _fallback_short_title(shortened) if len(shortened.split()) > 7 else shortened
+        word_count = len(shortened.split())
+        return shortened if 5 <= word_count <= 7 else _fallback_short_title(cleaned)
     except Exception:
         logger.exception("Gemini title shortening failed for %s", cleaned[:80])
         return _fallback_short_title(cleaned)

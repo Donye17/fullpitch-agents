@@ -36,7 +36,7 @@ REQUEST_DELAY_SECONDS = 1
 FAST_MAINTENANCE_HOURS = 48
 GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
 MAX_SUMMARY_REPAIRS_PER_RUN = 10
-MAX_TITLE_REPAIRS_PER_RUN = 20
+MAX_TITLE_REPAIRS_PER_RUN = 15
 JUNK_TITLES = {
     "create post",
     "find a club",
@@ -52,6 +52,11 @@ FULL_MODE_JUNK_TITLE_PATTERNS = (
     "coaching mentorship program",
     "broadcast academy",
     "firstpoint usa official",
+    "student-leader",
+    "powered by gdpr",
+)
+FAST_MODE_JUNK_TITLE_PATTERNS = (
+    "student leader",
     "student-leader",
     "powered by gdpr",
 )
@@ -118,6 +123,11 @@ def _is_junk_title(value: str | None) -> bool:
 def _is_full_mode_junk_title(value: str | None) -> bool:
     title = _unescape_text(value).lower()
     return any(pattern in title for pattern in FULL_MODE_JUNK_TITLE_PATTERNS)
+
+
+def _is_fast_mode_junk_title(value: str | None) -> bool:
+    title = _unescape_text(value).lower()
+    return any(pattern in title for pattern in FAST_MODE_JUNK_TITLE_PATTERNS)
 
 
 def _is_spam_video_source(video: dict[str, Any]) -> bool:
@@ -319,7 +329,7 @@ def _repair_article(
     updates: dict[str, str] = {}
     attempted: set[str] = set()
 
-    if (mode_label == "Fast" and _is_junk_title(raw_title)) or (
+    if (mode_label == "Fast" and (_is_junk_title(raw_title) or _is_fast_mode_junk_title(raw_title))) or (
         mode_label == "Full" and _is_full_mode_junk_title(raw_title)
     ):
         api.delete_article(article["id"])
@@ -460,6 +470,7 @@ def _run_fast_title_shortening(api: FullpitchAPI, genai_client) -> dict[str, Any
         "articles_checked": 0,
         "titles_attempted": 0,
         "titles_fixed": 0,
+        "articles_deleted": 0,
         "errors": [],
     }
     if genai_client is None:
@@ -480,6 +491,17 @@ def _run_fast_title_shortening(api: FullpitchAPI, genai_client) -> dict[str, Any
         raw_title = article.get("title") or ""
         title = _unescape_text(raw_title)
         summary["articles_checked"] += 1
+        if _is_fast_mode_junk_title(title):
+            try:
+                api.delete_article(article["id"])
+                summary["articles_deleted"] += 1
+                logger.info("Fast maintenance: deleted junk article %s", title)
+            except Exception as exc:
+                logger.exception("Junk article deletion failed for %s", title)
+                summary["errors"].append(f"{title}: {exc}")
+            time.sleep(REQUEST_DELAY_SECONDS)
+            continue
+
         if not _needs_title_repair(title):
             continue
 
@@ -489,7 +511,7 @@ def _run_fast_title_shortening(api: FullpitchAPI, genai_client) -> dict[str, Any
             if shortened and shortened != title and _word_count(shortened) <= 7:
                 api.update_article(article["id"], {"title": shortened})
                 summary["titles_fixed"] += 1
-                logger.info("Fast maintenance: shortened article title %s -> %s", title, shortened)
+                logger.info("Title shortened: %s → %s", title, shortened)
         except Exception as exc:
             logger.exception("Title shortening failed for %s", title)
             summary["errors"].append(f"{title}: {exc}")
