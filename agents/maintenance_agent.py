@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from tools.college_leagues import classify_college_league
-from tools.editorial_ai import normalize_feed_summary
+from tools.editorial_ai import normalize_feed_summary, shorten_title
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.scraper import (
@@ -36,6 +36,7 @@ REQUEST_DELAY_SECONDS = 1
 FAST_MAINTENANCE_HOURS = 48
 GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
 MAX_SUMMARY_REPAIRS_PER_RUN = 10
+MAX_TITLE_REPAIRS_PER_RUN = 20
 JUNK_TITLES = {
     "create post",
     "find a club",
@@ -148,6 +149,10 @@ def _needs_summary_repair(value: Any) -> bool:
         or "\n\n" in value
         or stripped.lower().startswith(("this article", "in this piece"))
     )
+
+
+def _needs_title_repair(value: Any) -> bool:
+    return isinstance(value, str) and _word_count(_unescape_text(value)) > 7
 
 
 def _get_genai_client():
@@ -450,11 +455,56 @@ def _repair_video(video: dict[str, Any], api: FullpitchAPI, approved_channels: s
     return {"fixed": 1, "deleted": 0}
 
 
+def _run_fast_title_shortening(api: FullpitchAPI, genai_client) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "articles_checked": 0,
+        "titles_attempted": 0,
+        "titles_fixed": 0,
+        "errors": [],
+    }
+    if genai_client is None:
+        summary["errors"].append("GOOGLE_API_KEY not set; skipped title shortening")
+        return summary
+
+    try:
+        articles = _all_articles(api)
+    except FullpitchAPIError as exc:
+        logger.error("Failed to fetch articles for fast title shortening: %s", exc)
+        summary["errors"].append(str(exc))
+        return summary
+
+    for article in articles:
+        if summary["titles_attempted"] >= MAX_TITLE_REPAIRS_PER_RUN:
+            break
+
+        raw_title = article.get("title") or ""
+        title = _unescape_text(raw_title)
+        summary["articles_checked"] += 1
+        if not _needs_title_repair(title):
+            continue
+
+        try:
+            summary["titles_attempted"] += 1
+            shortened = shorten_title(title, genai_client)
+            if shortened and shortened != title and _word_count(shortened) <= 7:
+                api.update_article(article["id"], {"title": shortened})
+                summary["titles_fixed"] += 1
+                logger.info("Fast maintenance: shortened article title %s -> %s", title, shortened)
+        except Exception as exc:
+            logger.exception("Title shortening failed for %s", title)
+            summary["errors"].append(f"{title}: {exc}")
+
+        time.sleep(REQUEST_DELAY_SECONDS)
+
+    logger.info("Fast title-shortening summary: %s", summary)
+    return summary
+
+
 def run_maintenance_agent() -> dict[str, Any]:
     """Run fast maintenance every cycle and full maintenance at 3 AM UTC."""
     api = FullpitchAPI()
     genai_client = _get_genai_client()
-    result: dict[str, Any] = {"fast": None, "full": None}
+    result: dict[str, Any] = {"fast": None, "fast_title_shortening": None, "full": None}
     summary_budget = {"remaining": MAX_SUMMARY_REPAIRS_PER_RUN}
 
     try:
@@ -471,6 +521,7 @@ def run_maintenance_agent() -> dict[str, Any]:
             repair_short_summary=True,
             summary_budget=summary_budget,
         )
+        result["fast_title_shortening"] = _run_fast_title_shortening(api, genai_client)
 
     if is_full_maintenance_window():
         try:
