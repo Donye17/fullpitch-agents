@@ -21,8 +21,8 @@ from agents.narugbydb import (
     parse_standings_table,
     resolve_team,
 )
+from tools.final_score_verification import on_match_final
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
-from tools.match_report_generator import generate_match_report
 from tools.scraper import ScraperError, fetch_text
 
 logger = logging.getLogger(__name__)
@@ -154,10 +154,10 @@ def _is_today_or_live(match: dict[str, Any], now: datetime | None = None) -> boo
 
 def _parse_live_status(text: str) -> str:
     lowered = text.lower()
+    if re.search(r"\b(ft|full time|final|finished)\b", lowered):
+        return "final"
     if re.search(r"\b(live|in progress)\b", lowered):
         return "live"
-    if re.search(r"\b(ft|full time|final)\b", lowered):
-        return "final"
     return "scheduled"
 
 
@@ -294,12 +294,48 @@ def _log_score_pattern(pattern_name: str, score: tuple[int, int] | None, context
     )
 
 
+def _team_score_codes(match: dict[str, Any], side: str) -> set[str]:
+    team_name = _match_team_name(match, side)
+    codes = {_match_team_abbr(match, side)}
+    words = re.findall(r"[A-Za-z]+", team_name)
+    if words:
+        codes.add("".join(word[0] for word in words[:3]).upper())
+        codes.add(words[-1].upper())
+    lookup = _lookup_key(team_name)
+    if "new england" in lookup or "free jacks" in lookup:
+        codes.update({"NE", "NEF", "FREE JACKS"})
+    if "california" in lookup or "legion" in lookup:
+        codes.update({"CAL", "LEGION"})
+    return {code for code in codes if code}
+
+
+def _compact_live_score(text: str, match: dict[str, Any]) -> tuple[tuple[int, int], str] | None:
+    home_codes = sorted(_team_score_codes(match, "home"), key=len, reverse=True)
+    away_codes = sorted(_team_score_codes(match, "away"), key=len, reverse=True)
+    for home_code in home_codes:
+        for away_code in away_codes:
+            pattern = rf"\b{re.escape(home_code)}\s+(?:\d+T\s+)?(\d{{1,3}})\s+(\d{{1,3}})\s+(?:HT:|\b{re.escape(away_code)}\b)"
+            match_obj = re.search(pattern, text, flags=re.IGNORECASE)
+            if match_obj:
+                return (int(match_obj.group(1)), int(match_obj.group(2))), match_obj.group(0)
+    return None
+
+
 def _extract_current_score(lines: list[str], match: dict[str, Any]) -> tuple[tuple[int, int] | None, str, str]:
     home_abbr = _match_team_abbr(match, "home")
     away_abbr = _match_team_abbr(match, "away")
     live_lines = _pre_history_lines(lines)
     live_text = " ".join(live_lines)
     top_text = live_text[:500]
+
+    compact_score = _compact_live_score(live_text, match)
+    _log_score_pattern(
+        "compact-live-before-ht",
+        compact_score[0] if compact_score else None,
+        compact_score[1] if compact_score else live_text[:300],
+    )
+    if compact_score:
+        return compact_score[0], "compact-live-before-ht", compact_score[1]
 
     free_jacks_match = re.search(r"Free Jacks\D+(\d{1,3})\D+(\d{1,3})\D+California", live_text, re.IGNORECASE)
     free_jacks_score = (
@@ -534,24 +570,24 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
                     "status": status,
                     "agentName": "mlr-agent",
                     "region": "national",
-                    "events": {"sourceUrl": url, "liveScoreSource": "majorleague.rugby"},
+                    "events": {
+                        "sourceUrl": url,
+                        "liveScoreSource": "majorleague.rugby",
+                        "needs_verification": status == "final",
+                    },
                 }
             )
             summary["live_matches_updated"] += 1
             logger.info("Updated MLR live page score: %s %s-%s %s (%s)", _match_team_name(match, "home"), home_score, away_score, _match_team_name(match, "away"), status)
             if status == "final":
-                generate_match_report(
-                    url,
-                    _match_team_name(match, "home"),
-                    _match_team_name(match, "away"),
-                    home_score,
-                    away_score,
-                    "mlr",
+                on_match_final(
+                    match,
+                    (home_score, away_score),
+                    match_slug=url,
                     api=api,
                     page_html=page_html,
                     week=_week_from_match(match),
                     venue=match.get("venue"),
-                    match_id=match.get("id"),
                 )
 
         for player in parsed["lineups"]:

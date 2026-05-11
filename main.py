@@ -75,7 +75,7 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool
         _week_from_match,
         _parse_mlr_match_page,
     )
-    from tools.match_report_generator import generate_match_report
+    from tools.final_score_verification import on_match_final
     from tools.scraper import fetch_text
 
     api = api or FullpitchAPI()
@@ -110,7 +110,11 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool
             "homeScore": home_score,
             "awayScore": away_score,
             "status": status,
-            "events": {"sourceUrl": url, "liveScoreSource": "majorleague.rugby"},
+            "events": {
+                "sourceUrl": url,
+                "liveScoreSource": "majorleague.rugby",
+                "needs_verification": status == "final",
+            },
         },
     )
     logger.info(
@@ -122,18 +126,14 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool
         status,
     )
     if status == "final" and current_status != "completed":
-        generate_match_report(
-            url,
-            _match_team_name(match, "home"),
-            _match_team_name(match, "away"),
-            home_score,
-            away_score,
-            "mlr",
+        on_match_final(
+            match,
+            (home_score, away_score),
+            match_slug=url,
             api=api,
             page_html=page_html,
             week=_week_from_match(match),
             venue=match.get("venue"),
-            match_id=match.get("id"),
         )
     return True
 
