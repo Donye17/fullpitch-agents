@@ -8,7 +8,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-GEMINI_FREE_TIER_MODEL = "gemini-2.0-flash-lite"
+GEMINI_FREE_TIER_MODEL = "gemini-2.5-flash"
 
 
 def parse_relevant_numbers(value: str, count: int) -> set[int]:

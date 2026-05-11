@@ -1,7 +1,7 @@
 """Content Agent — AI-written match reports, recaps, and spotlights.
 
 Schedule: Triggered by other agents after data ingest.
-Models: gemini-2.0-flash-lite for free-tier budget protection.
+Models: gemini-2.5-flash for the available Gemini account model.
 Writes to: /api/v1/ingest/article
 """
 
@@ -74,7 +74,7 @@ def run() -> None:
     # TODO: implement full pipeline
     #   1. Query for matches that need reports (completed, no article)
     #   2. Load appropriate prompt template
-    #   3. Generate content with Gemini (pro for MLR, flash for college)
+    #   3. Generate content with the configured Gemini model
     #   4. Pipe output through clean_text()
     #   5. Submit as draft article via /api/v1/ingest/article
     #   6. Log run to AgentLog

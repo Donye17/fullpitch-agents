@@ -47,7 +47,7 @@ python main.py --agent wer
 |----------|-------|-----|
 | `GEMINI_REASONING` | `gemini-2.5-flash` | Agent logic, classification, dedup |
 | `GEMINI_WRITING_MID` | `gemini-2.5-flash` | Summaries, recaps |
-| `GEMINI_WRITING_PRO` | `gemini-2.5-pro` | Match reports, spotlights |
+| `GEMINI_WRITING_PRO` | `gemini-2.5-flash` | Match reports, spotlights |
 
 ## Architecture
 

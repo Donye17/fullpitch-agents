@@ -49,7 +49,7 @@ Fullpitch (`fullpitch.app`) is the only comprehensive US rugby data platform —
 | Agent framework | Google ADK (Python) | Multi-agent orchestration |
 | Agent model — reasoning | `gemini-2.5-flash` | Agent logic, classification, dedup |
 | Agent model — writing mid | `gemini-2.5-flash` | Summaries, recaps |
-| Agent model — writing pro | `gemini-2.5-pro` | Match reports, spotlights |
+| Agent model — writing pro | `gemini-2.5-flash` | Match reports, spotlights |
 
 **Repo locations (local):**
 - App: `C:\Users\josh\Desktop\rugby-platform` (new, clean install)
@@ -57,8 +57,7 @@ Fullpitch (`fullpitch.app`) is the only comprehensive US rugby data platform —
 
 > [!important] Locked Decisions — Never Change
 > - Agents = Google ADK Python on Railway. Never TypeScript. Never Cloudflare Workers.
-> - `gemini-2.0-flash` is deprecated — shuts down June 1 2026. Never use it.
-> - Use only: `gemini-2.5-flash`, `gemini-2.5-pro`
+> - Use only `gemini-2.5-flash`; it is the only Gemini model available on this account.
 > - UI = Tailwind + shadcn/ui. Mobile-first always.
 > - Auth = Clerk. Three roles: `admin`, `program_rep`, `user`
 > - All REST API routes versioned: `/api/v1/`
@@ -218,11 +217,11 @@ Agents ingest data AND write content from it. All prompts live in versioned file
 
 | Content Type | Model | Trigger | Publish Mode |
 |-------------|-------|---------|-------------|
-| Match report (MLR) | `gemini-2.5-pro` | After final score written | Draft → admin approves |
+| Match report (MLR) | `gemini-2.5-flash` | After final score written | Draft → admin approves |
 | Match report (college) | `gemini-2.5-flash` | After score written | Draft → admin approves |
 | Article summary | `gemini-2.5-flash` | On article ingest | Auto-publish |
 | Standings recap | `gemini-2.5-flash` | Weekly | Draft → admin approves |
-| Player spotlight | `gemini-2.5-pro` | Manual trigger | Draft → admin approves |
+| Player spotlight | `gemini-2.5-flash` | Manual trigger | Draft → admin approves |
 
 Prompts folder: `fullpitch-agents/prompts/`
 - `match_report_mlr.txt`
@@ -314,7 +313,7 @@ fullpitch-agents/
 ```python
 GEMINI_REASONING   = "gemini-2.5-flash"       # agent logic, classification, dedup
 GEMINI_WRITING_MID = "gemini-2.5-flash"        # summaries, recaps, mid content
-GEMINI_WRITING_PRO = "gemini-2.5-pro"          # match reports, spotlights
+GEMINI_WRITING_PRO = "gemini-2.5-flash"        # match reports, spotlights
 ```
 
 ---
@@ -458,7 +457,7 @@ These must be copied to new project before deleting old folder:
 - **Step 21 (roadmap):** Program claim flow complete — `/claim/[teamId]` public page (viewable by anyone, submission requires Clerk sign-in) with form fields: name, role (Head Coach / Assistant Coach / Athletic Director / Team Manager / Other), email, optional verification message. Creates `Claim` record with `status="pending"`. Pre-fills name/email from Clerk if signed in. Prevents duplicate pending claims. Success/duplicate confirmation pages. `/teams/[id]` public team page showing team info, current standing, next match, recent results, roster; "Claim This Program" button appears only when team has no approved claim. `src/lib/claims.ts` provides standalone `approveClaim(claimId, adminClerkId)` and `rejectClaim(claimId, adminClerkId, reason?)` helpers. `npx tsc --noEmit` and `npm run build` pass.
 - **Agent source reliability fixes:** `FullpitchAPI` uses `httpx.Client(follow_redirects=True)` to handle 307s on all API reads/writes, has protected `PATCH /api/v1/articles/[id]`, protected `PATCH /api/v1/videos/[id]`, protected `PATCH /api/v1/matches/[id]`, and reads active source records from public `GET /api/v1/sources`. Direct `httpx.get` helpers also follow redirects. `tools/scraper.py` identifies outbound scrape requests with `User-Agent: Fullpitch/1.0 (fullpitch.app)`, pauses at least 2 seconds between consecutive requests to the same domain, provides `extract_og_image(url)`, `extract_publish_date(html)` with meta/time/JSON-LD/byline-date fallback and no "today" fallback, `extract_page_text_from_html(html)`, and `gemini_summarize(url, text?)` for 150-200 word article summaries. `news_agent.py`, `video_agent.py`, `mlr_agent.py`, and `wer_agent.py` now consume sources from the Fullpitch API instead of hardcoded source lists. `mlr_agent.py` and `wer_agent.py` use source records for NA Rugby DB 2026 standings and fixtures/results pages, parse table/event rows via `agents/narugbydb.py`, match abbreviated team names to seeded DB teams, and POST to `/api/v1/ingest/match` and `/api/v1/ingest/standing`. Fixture parsing uses NA Rugby DB's left/right team links first; `FullpitchAPI.get_team(name=...)` fetches teams and matches locally because the public teams endpoint does not support `name`, returns `None` when no exact local match exists, and never falls back to a default team. MLR/WER match ingest logs resolved IDs for every attempted match and skips unresolved or same-ID pairings before writing. The default `main.py` boss service now starts a daemon live-score thread beside the hourly boss loop; it checks today's scheduled MLR matches and active live matches every minute during match windows (five minutes when idle), constructs Major League Rugby match-page URLs from DB fixtures, logs fetched page text length, first 200 characters, numbers near team names, and each live-score regex result (`compact-live-before-ht`, `Free Jacks...California`, first dash score, top-500 standalone numbers), stops live-score parsing before `Recent meetings` / `Head to Head`, prioritizes compact live-score text like `NE 2T 26 14 HT: 17-7 CAL` before any dash-score fallback, detects `Finished` / `Full time` / `FT` as final before generic live labels, treats parsed scores after kickoff as live when the page lacks a status label, and patches changed scores through `/api/v1/matches/[id]`. MLR agent runs still ingest visible match-page lineup players into `Player`/`PlayerSeason`. WER parsing is constrained to Bay Breakers, Boston Banshees, Chicago Tempest, Denver Onyx, New York Exiles, and TC Gemini so MLR team rows from a wrong table are ignored.
 - **MLR final score verification and match reports:** `tools/final_score_verification.py` starts one daemon verification thread per final MLR match. When the live tracker sees final, it immediately patches status/MLR score with `events.needs_verification=true`, waits 15 minutes, fetches `https://narugbydb.com/calendar/2026-mlr-fixtures-results/`, parses the verified final score via `agents/narugbydb.py`, corrects mismatched MLR scores using NARDB, retries once after 10 minutes if NARDB has not updated, and only then calls `tools/match_report_generator.py`. `tools/match_report_generator.py` creates idempotent Fullpitch-original MLR match reports from a Major League Rugby match slug/page, verified final score, teams, and structured summary-page facts; it reuses already-fetched MLR page HTML where available, extracts relevant scoring/stat lines and `og:image`, calls Gemini with strict no-invention instructions, falls back to deterministic copy if Gemini is unavailable, publishes through `/api/v1/ingest/article` with `sourceName="Fullpitch"` and `match-report` tags, and attaches `summaryArticleId` back to the match. A one-off NE Free Jacks 26-21 California Legion Week 7 report was published as article `cmoyq0njn007z04k0mx38q57z`.
-- **Gemini quota emergency mode:** All Python agent model constants now use `gemini-2.0-flash-lite` through `tools/gemini_relevance.GEMINI_FREE_TIER_MODEL`. `video_agent.py` no longer calls Gemini for video relevance at all; approved YouTube channel allow-list filtering is the relevance gate. `news_agent.py`, `ncr_agent.py`, and `nira_agent.py` use one batched title relevance call per source/list instead of one Gemini call per article. Article summary generation is skipped when the source candidate already provides a summary/snippet; `maintenance_agent.py` caps summary regeneration attempts at 10 per maintenance run.
+- **Gemini quota emergency mode:** All Python agent model constants now use the account-available `gemini-2.5-flash` through `tools/gemini_relevance.GEMINI_FREE_TIER_MODEL`. `video_agent.py` no longer calls Gemini for video relevance at all; approved YouTube channel allow-list filtering is the relevance gate. `news_agent.py`, `ncr_agent.py`, and `nira_agent.py` use one batched title relevance call per source/list instead of one Gemini call per article. Article summary generation is skipped when the source candidate already provides a summary/snippet; `maintenance_agent.py` caps summary regeneration attempts at 10 per maintenance run.
 - **News image ingest/classification:** `news_agent.py` fetches the full article page for relevant official web articles only (no Reddit ingest), extracts `<meta property="og:image">` from the fetched HTML and falls back to `extract_og_image(article_url)` when needed, extracts original publish dates from article meta/time/JSON-LD/byline fields, and readable article text. It uses `tools/article_filter.py` to reject navigation/category/tag links, generic nav titles, and pages with too little extracted body text before batched Gemini relevance checks. Titles and summaries are normalized with `html.unescape()` before ingest. New article summaries use existing source snippets when present and only call Gemini summary generation when no summary/snippet exists. League classification uses title/content rather than source domain and now supports specific college tags (`craa-d1a`, `craa-d1aa`, `craa-women`, `ncr-d1`, `ncr-d2`, `ncr-d3`, `ncr-women`, `nira`, `college`); `eagles` is reserved for USA Eagles national-team articles only, while USA Rugby org updates classify as `general`.
 - **Maintenance agent:** `agents/maintenance_agent.py` runs as the final boss sub-agent after source ingest. Fast mode runs every cycle against articles created in the last 48 hours, prioritizing articles with missing `imageUrl` before other repairs, repairing missing `imageUrl`, `publishedDate`, `slug`, `summary`, `sourceDomain`, HTML-escaped titles, and wrong `league` tags; it also deletes known junk nav-page titles through protected `DELETE /api/v1/articles/[id]`. Full mode runs only at 3 AM UTC, fetches all articles, applies the same repairs across history, shares the 10-attempt Gemini summary regeneration budget for the whole maintenance run, decodes HTML entities in existing video titles through protected `PATCH /api/v1/videos/[id]`, and deletes spam or unapproved YouTube videos whose `sourceName` / channel does not match the approved source-channel allow-list through protected `DELETE /api/v1/videos/[id]`.
 - **Editorial cleanup and summary budget:** `tools/editorial_ai.py` centralizes `shorten_title()` and `normalize_feed_summary()`. News, CRAA, NCR, NIRA, and match-report article ingests shorten long titles to 5-7 words before posting. The shared `prompts/article_summary.txt` and `tools/scraper.gemini_summarize()` now request one tight paragraph, max 60 words, no filler intro phrases, and no "The" opener. NCR article discovery only ingests URLs whose path contains `/news/`. Fast maintenance now regenerates only missing, over-100-word, multi-paragraph, or filler-opening summaries, capped at 10 attempts per run, and runs a separate `fast_title_shortening` task that scans existing articles with titles over 7 words and uses Gemini to shorten up to 20 titles per run; full maintenance deletes junk NCR/admin-style article titles containing Student Leader of the Month, Membership Dues, Coaching Mentorship Program, Broadcast Academy, FirstPoint USA Official, Student-Leader, or Powered by GDPR.
@@ -488,12 +487,12 @@ These must be copied to new project before deleting old folder:
 |------|----------|
 | May 2026 | 100% fresh start — new project folder, clean codebase, delete old repo |
 | May 2026 | ADK Python on Railway — locked forever, never TypeScript, never Workers |
-| May 2026 | Gemini quota emergency mode: use `gemini-2.0-flash-lite` where agents still need Gemini, batch article relevance checks, remove video relevance calls, and cap maintenance summary regeneration. |
+| May 2026 | Gemini quota emergency mode: use the account-available `gemini-2.5-flash` where agents still need Gemini, batch article relevance checks, remove video relevance calls, and cap maintenance summary regeneration. |
 | May 2026 | Auth: Clerk — 3 roles: admin, program_rep, user |
 | May 2026 | Program rep system: Option C hybrid — community submits, reps self-manage |
 | May 2026 | Staging: Vercel preview + Neon DB branch — free |
 | May 2026 | Mobile app planned — all API routes /api/v1/ from day one |
-| May 2026 | Content agent: AI writing is disabled/TODO and model constants are kept on `gemini-2.0-flash-lite` for free-tier budget protection. |
+| May 2026 | Content agent: AI writing is disabled/TODO and model constants are kept on `gemini-2.5-flash`, the only available Gemini model on the account. |
 | May 2026 | Prompts in versioned .txt files at fullpitch-agents/prompts/ — never hardcoded |
 | May 2026 | Analytics: Vercel Analytics (Pro) |
 | May 2026 | Sentry free tier — DSN in env vars, not hardcoded (`NEXT_PUBLIC_SENTRY_DSN`); build-time upload via `SENTRY_AUTH_TOKEN` / `SENTRY_ORG` / `SENTRY_PROJECT` when set |
@@ -517,7 +516,7 @@ These must be copied to new project before deleting old folder:
 | May 2026 | App repo path: `C:\Users\josh\Desktop\Fullpitch` — Next.js 15 scaffold in folder root (no subfolder); npm package name `fullpitch` |
 | May 2026 | Prisma 7 — URL in `prisma.config.ts`, adapter-pg pattern (`datasource.url` in config; Prisma 7.8 has no `datasourceUrl` key — `db push` requires `datasource.url`). No URL in `schema.prisma`. |
 | May 2026 | Agent HTTP fixes: API client and direct `httpx.get` calls follow redirects; MLR and WER source URL fallback chains updated after 307/404/DNS failures. |
-| May 2026 | Agent reasoning model switched back to `gemini-2.0-flash-lite` after quota pressure; video relevance Gemini calls were removed and article relevance was batched. MLR sources moved to `majorleague.rugby`; CRAA sources moved off the dead RugbyAffinity subdomain. |
+| May 2026 | Agent reasoning model switched to `gemini-2.5-flash`, the available account model; video relevance Gemini calls were removed and article relevance was batched. MLR sources moved to `majorleague.rugby`; CRAA sources moved off the dead RugbyAffinity subdomain. |
 | May 2026 | News agent now extracts full-page `og:image` metadata for relevant web articles and includes it as `imageUrl` during article ingest. |
 | May 2026 | Scraper requests now use `User-Agent: Fullpitch/1.0 (fullpitch.app)` and throttle repeated requests to the same domain by at least 2 seconds. |
 | May 2026 | Maintenance agent added as the final boss sub-agent; it audits articles daily and repairs missing image, slug, summary, and source-domain metadata via protected article PATCH calls. |

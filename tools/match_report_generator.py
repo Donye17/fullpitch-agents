@@ -161,7 +161,7 @@ def _call_gemini(prompt: str) -> str | None:
 
     try:
         response = client.models.generate_content(
-            model=os.getenv("GEMINI_MATCH_REPORT_MODEL", GEMINI_FREE_TIER_MODEL),
+            model=GEMINI_FREE_TIER_MODEL,
             contents=prompt,
         )
         return clean_text(response.text)
