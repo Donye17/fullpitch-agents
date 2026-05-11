@@ -22,6 +22,7 @@ from tools.article_filter import (
     looks_like_article_url,
 )
 from tools.college_leagues import VALID_COLLEGE_LEAGUES, classify_college_league
+from tools.editorial_ai import normalize_feed_summary, shorten_title
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL, batch_relevance_check
 from tools.scraper import (
@@ -60,7 +61,7 @@ def _get_genai_client():
 
 
 def _generate_summary(title: str, content: str, source: str, client) -> str | None:
-    """Use Gemini to write a 150-200 word article summary."""
+    """Use Gemini to write a short one-paragraph article summary."""
     if client is None:
         return None
     try:
@@ -72,7 +73,7 @@ def _generate_summary(title: str, content: str, source: str, client) -> str | No
             model=GEMINI_WRITING_MID,
             contents=prompt,
         )
-        return clean_text(resp.text)
+        return normalize_feed_summary(resp.text)
     except Exception:
         logger.exception("Gemini summary generation failed for '%s'", title[:80])
         return None
@@ -306,20 +307,22 @@ def run_news_agent() -> dict[str, Any]:
                 summary["skipped_irrelevant"] += 1
                 continue
 
+            title = _clean_entity_text(art["title"])
             article_summary = art.get("snippet") or ""
             if not article_summary:
                 article_summary = gemini_summarize(article_url, article_text) or _generate_summary(
-                    art["title"], article_text, _domain(url), genai_client
+                    title, article_text, _domain(url), genai_client
                 )
-            article_summary = _clean_entity_text(article_summary)
+            article_summary = normalize_feed_summary(_clean_entity_text(article_summary))
 
             article_league = league or _classify_league(
-                art["title"], article_text, genai_client
+                title, article_text, genai_client
             )
+            title = shorten_title(title, genai_client)
 
             try:
                 api.create_article({
-                    "title": _clean_entity_text(art["title"]),
+                    "title": title,
                     "url": article_url,
                     "source": _domain(url),
                     "publishedDate": published_date,
@@ -333,7 +336,7 @@ def run_news_agent() -> dict[str, Any]:
                 existing_urls.add(article_url)
                 summary["written"] += 1
             except FullpitchAPIError as exc:
-                msg = f"Failed to ingest article '{art['title'][:60]}': {exc}"
+                msg = f"Failed to ingest article '{title[:60]}': {exc}"
                 logger.error(msg)
                 summary["errors"].append(msg)
 

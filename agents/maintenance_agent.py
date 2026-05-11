@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from tools.college_leagues import classify_college_league
+from tools.editorial_ai import normalize_feed_summary
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.scraper import (
@@ -34,7 +35,6 @@ ARTICLE_LIMIT = 200
 REQUEST_DELAY_SECONDS = 1
 FAST_MAINTENANCE_HOURS = 48
 GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
-MIN_SUMMARY_WORDS = 150
 MAX_SUMMARY_REPAIRS_PER_RUN = 10
 JUNK_TITLES = {
     "create post",
@@ -45,6 +45,15 @@ JUNK_TITLES = {
     "find a program",
     "youth & high school",
 }
+FULL_MODE_JUNK_TITLE_PATTERNS = (
+    "student leader of the month",
+    "membership dues",
+    "coaching mentorship program",
+    "broadcast academy",
+    "firstpoint usa official",
+    "student-leader",
+    "powered by gdpr",
+)
 SPAM_VIDEO_SOURCE_PATTERNS = (
     re.compile(r"\bhdq\b", re.I),
     re.compile(r"\bgaming\b", re.I),
@@ -105,6 +114,11 @@ def _is_junk_title(value: str | None) -> bool:
     return _unescape_text(value).lower() in JUNK_TITLES
 
 
+def _is_full_mode_junk_title(value: str | None) -> bool:
+    title = _unescape_text(value).lower()
+    return any(pattern in title for pattern in FULL_MODE_JUNK_TITLE_PATTERNS)
+
+
 def _is_spam_video_source(video: dict[str, Any]) -> bool:
     source_names = [
         _unescape_text(video.get("sourceName")),
@@ -126,7 +140,14 @@ def _is_unapproved_video_source(video: dict[str, Any], approved_channels: set[st
 def _needs_summary_repair(value: Any) -> bool:
     if _is_missing(value):
         return True
-    return isinstance(value, str) and _word_count(value) < MIN_SUMMARY_WORDS
+    if not isinstance(value, str):
+        return False
+    stripped = value.lstrip()
+    return (
+        _word_count(value) > 100
+        or "\n\n" in value
+        or stripped.lower().startswith(("this article", "in this piece"))
+    )
 
 
 def _get_genai_client():
@@ -293,7 +314,9 @@ def _repair_article(
     updates: dict[str, str] = {}
     attempted: set[str] = set()
 
-    if mode_label == "Fast" and _is_junk_title(raw_title):
+    if (mode_label == "Fast" and _is_junk_title(raw_title)) or (
+        mode_label == "Full" and _is_full_mode_junk_title(raw_title)
+    ):
         api.delete_article(article["id"])
         logger.info("%s maintenance: deleted junk article %s", mode_label, title)
         return {"fixed": 0, "attempted": 1, "deleted": 1}
@@ -340,7 +363,7 @@ def _repair_article(
         summary_attempted = 1
         summary = gemini_summarize(source_url)
         if summary:
-            updates["summary"] = summary
+            updates["summary"] = normalize_feed_summary(summary)
     elif summary_needs_repair and source_url:
         logger.info("%s maintenance: skipped summary repair for %s because summary budget is exhausted", mode_label, title)
 

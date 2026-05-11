@@ -18,6 +18,7 @@ from urllib.parse import urljoin, urlparse
 
 from tools.article_filter import has_minimum_content, is_viable_article_candidate, looks_like_article_url
 from tools.college_leagues import classify_college_league, classify_college_league_with_gemini
+from tools.editorial_ai import normalize_feed_summary, shorten_title
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.scraper import (
@@ -168,10 +169,10 @@ def _generate_summary(title: str, content: str, source: str, client) -> str | No
         template = _load_summary_prompt()
         prompt = template.replace("{title}", title).replace("{source}", source).replace("{content}", content[:4000])
         response = client.models.generate_content(model=GEMINI_WRITING_MID, contents=prompt)
-        return clean_text(response.text)
+        return normalize_feed_summary(response.text)
     except Exception:
         logger.exception("Gemini CRAA summary failed for %s", title[:80])
-        return clean_text(content)[:500] if content else None
+        return normalize_feed_summary(content) if content else None
 
 
 def _article_title_from_link(link) -> str:
@@ -323,17 +324,20 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
         summary["articles_skipped"] += 1
         return
 
-    league = _classify_article(article["title"], article_text, client)
+    title = _clean_entity_text(article["title"])
+    league = _classify_article(title, article_text, client)
     article_summary = _clean_entity_text(article.get("summary"))
     if not article_summary:
         article_summary = _clean_entity_text(
-            _generate_summary(article["title"], article_text, _domain(article["url"]), client)
+            _generate_summary(title, article_text, _domain(article["url"]), client)
         )
+    article_summary = normalize_feed_summary(article_summary)
+    title = shorten_title(title, client)
 
     try:
         api.create_article(
             {
-                "title": _clean_entity_text(article["title"]),
+                "title": title,
                 "url": article["url"],
                 "source": CRAA_SOURCE_NAME,
                 "publishedDate": published_date,
@@ -347,7 +351,7 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
         )
         summary["articles_written"] += 1
     except FullpitchAPIError as exc:
-        msg = f"Failed to ingest CRAA article '{article['title'][:60]}': {exc}"
+        msg = f"Failed to ingest CRAA article '{title[:60]}': {exc}"
         logger.error(msg)
         summary["errors"].append(msg)
 

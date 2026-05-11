@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 
 from tools.article_filter import has_minimum_content, is_viable_article_candidate, looks_like_article_url
 from tools.college_leagues import classify_college_league_with_gemini, decode_html
+from tools.editorial_ai import normalize_feed_summary, shorten_title
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL, batch_relevance_check
 from tools.scraper import (
@@ -65,7 +66,7 @@ def _extract_articles(soup, base_url: str) -> list[dict[str, str]]:
         if not href or href.startswith("#") or href.startswith("javascript:"):
             continue
         url = urljoin(base_url, href)
-        if url in seen or not looks_like_article_url(url):
+        if url in seen or not looks_like_article_url(url) or "/news/" not in urlparse(url).path.lower():
             continue
         title = decode_html(clean_text(link.get_text(" ", strip=True)))
         if not title:
@@ -94,7 +95,8 @@ def _ingest_article(api: FullpitchAPI, article: dict[str, str], client, summary:
     image_url = extract_og_image_from_html(html, article["url"]) or extract_og_image(article["url"])
     title = decode_html(article["title"])
     league = classify_college_league_with_gemini(title, text, client, default="college")
-    summary_text = decode_html(gemini_summarize(article["url"], text))
+    summary_text = normalize_feed_summary(decode_html(gemini_summarize(article["url"], text)))
+    title = shorten_title(title, client)
     try:
         api.create_article(
             {

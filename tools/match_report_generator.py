@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
+from tools.editorial_ai import normalize_feed_summary, shorten_title
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.scraper import ScraperError, extract_og_image_from_html, fetch_text
@@ -233,7 +234,8 @@ def generate_match_report(
     )
     generated = _call_gemini(_prompt(match_data))
     report = generated or _fallback_report(home_team, away_team, home_score, away_score, match_data)
-    title = f"{home_team} {home_score}-{away_score} {away_team} | {league.upper()}{f' Week {week}' if week else ''} Match Report"
+    raw_title = f"{home_team} {home_score}-{away_score} {away_team} | {league.upper()}{f' Week {week}' if week else ''} Match Report"
+    title = shorten_title(raw_title, _get_genai_client())
 
     try:
         response = api.create_article(
@@ -243,7 +245,7 @@ def generate_match_report(
                 "source": "Fullpitch",
                 "publishedDate": datetime.now(timezone.utc).isoformat(),
                 "league": league,
-                "summary": report,
+                "summary": normalize_feed_summary(report),
                 "content": report,
                 "imageUrl": image_url,
                 "agentName": "match-report-generator",
