@@ -14,15 +14,17 @@ from typing import Any
 from agents.narugbydb import (
     fetch_narugbydb_html,
     parse_fixtures_page,
-    parse_standings_table,
     resolve_team,
 )
+from tools.browser import fetch_js_page
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.schedule import is_tournament_active
 from tools.scraper import ScraperError
 
 logger = logging.getLogger(__name__)
 
 WER_STANDINGS_URL = "https://narugbydb.com/2026-wer-season-standings/"
+WER_PUBLIC_STANDINGS_URL = "https://www.womenseliterugby.us/standings"
 WER_FIXTURES_URL = "https://narugbydb.com/calendar/2026-wer-fixtures-results/"
 WER_SEASON = "2026"
 WER_TEAM_NAMES = {
@@ -54,11 +56,37 @@ def _fetch_wer_fixtures(url: str) -> list[dict[str, Any]]:
     return matches
 
 
-def _fetch_wer_standings(url: str) -> list[dict[str, Any]]:
-    soup = fetch_narugbydb_html(url)
-    standings = parse_standings_table(soup)
-    logger.info("Parsed %d WER standings rows from NA Rugby DB", len(standings))
-    return standings
+def scrape_wer_standings(api: FullpitchAPI) -> int:
+    """Fetch JS-rendered WER standings text and log team contexts for parser tuning."""
+    text = fetch_js_page(
+        WER_PUBLIC_STANDINGS_URL,
+        wait_for=".standings-table",
+        timeout=20000,
+    )
+
+    if not text:
+        logger.warning("WER standings: no data returned")
+        return 0
+
+    logger.info("WER standings text: %s", text[:1000])
+
+    known_teams = [
+        "Bay Breakers",
+        "Boston Banshees",
+        "Chicago Tempest",
+        "Denver Onyx",
+        "New York Exiles",
+        "TC Gemini",
+    ]
+
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        for team in known_teams:
+            if team in line:
+                context = lines[max(0, i - 2) : i + 6]
+                logger.info("WER standings row for %s: %s", team, context)
+
+    return 0
 
 
 def _ingest_matches(api: FullpitchAPI, season: str, matches: list[dict[str, Any]], summary: dict[str, Any]) -> None:
@@ -159,7 +187,7 @@ def run_wer_agent() -> dict[str, Any]:
     """Run the WER agent against NA Rugby DB."""
     api = FullpitchAPI()
     season = _current_season()
-    fixtures_url, standings_url = _data_source_urls(api)
+    fixtures_url, _standings_url = _data_source_urls(api)
     summary: dict[str, Any] = {
         "matches_found": 0,
         "matches_added": 0,
@@ -174,12 +202,15 @@ def run_wer_agent() -> dict[str, Any]:
         logger.error(msg)
         summary["errors"].append(msg)
 
-    try:
-        _ingest_standings(api, season, _fetch_wer_standings(standings_url), summary)
-    except ScraperError as exc:
-        msg = f"Failed to fetch WER standings from NA Rugby DB: {exc}"
-        logger.error(msg)
-        summary["errors"].append(msg)
+    if is_tournament_active():
+        try:
+            summary["standings_updated"] += scrape_wer_standings(api)
+        except Exception as exc:
+            msg = f"Failed to fetch WER standings with browser: {exc}"
+            logger.error(msg)
+            summary["errors"].append(msg)
+    else:
+        logger.info("WER standings: skipping browser scrape, not weekend")
 
     logger.info(
         "WER agent summary: %d matches found, %d matches upserted, %d standings upserted, %d errors",

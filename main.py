@@ -38,6 +38,7 @@ AGENT_MAP = {
     "video": "agents.video_agent",
     "eagles": "agents.eagles_agent",
     "college": "agents.college_agent",
+    "hs": "agents.hs_agent",
     "craa": "agents.craa_agent",
     "content": "agents.content_agent",
     "maintenance": "agents.maintenance_agent",

@@ -9,10 +9,11 @@ Run order:
   4. video_agent       — YouTube content discovery
   5. eagles_agent      — USA Eagles results
   6. college_agent     — college scores + standings
-  7. craa_agent        — CRAA news, rankings, postseason results
-  8. ncr_agent         — NCR news and results
-  9. nira_agent        — NIRA news and results
- 10. maintenance_agent — article metadata repair
+  7. hs_agent          — high school tournament diagnostics
+  8. craa_agent        — CRAA news, rankings, postseason results
+  9. ncr_agent         — NCR news and results
+ 10. nira_agent        — NIRA news and results
+ 11. maintenance_agent — article metadata repair
 """
 
 import logging
@@ -27,6 +28,7 @@ AGENT_RUN_ORDER = [
     ("video", "agents.video_agent"),
     ("eagles", "agents.eagles_agent"),
     ("college", "agents.college_agent"),
+    ("hs", "agents.hs_agent"),
     ("craa", "agents.craa_agent"),
     ("ncr", "agents.ncr_agent"),
     ("nira", "agents.nira_agent"),
