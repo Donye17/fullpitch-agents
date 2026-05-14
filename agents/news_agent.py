@@ -1,7 +1,8 @@
 """News Agent — official article ingest with US rugby relevance filter.
 
 Schedule: Hourly.
-Sources: majorleague.rugby/news, usa.rugby/news, rugbypass.com, ultimaterugby.com.
+Sources: majorleague.rugby/news, usa.rugby/news, rugbypass.com, ultimaterugby.com,
+        usrugbyfoundation.org/news (league=community, max 3/run).
 Writes to: /api/v1/ingest/article
 """
 
@@ -9,11 +10,14 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import html as html_lib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
+
+from bs4 import BeautifulSoup
 
 from tools.article_filter import (
     has_minimum_content,
@@ -223,6 +227,162 @@ def _parse_date(text: str) -> datetime | None:
     return None
 
 
+COMMUNITY_INGEST_MIN = datetime(2026, 5, 1, tzinfo=timezone.utc)
+USRF_SKIP_TITLE_SUBSTRINGS = (
+    "donate",
+    "giving tuesday",
+    "make a donation",
+    "scrumble",
+    "sold out",
+    "register today",
+)
+
+
+def _should_skip_community_fundraising_title(title: str) -> bool:
+    t = title.lower()
+    return any(s in t for s in USRF_SKIP_TITLE_SUBSTRINGS)
+
+
+def _parse_iso_to_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        text = value.strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _extract_usrf_article_urls(soup: BeautifulSoup, base_url: str) -> list[str]:
+    """Collect /news/[slug] article URLs from the US Rugby Foundation news index."""
+    host = urlparse(base_url).netloc.lower()
+    if "usrugbyfoundation.org" not in host:
+        logger.warning("Community news listing host not supported: %s", host)
+        return []
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for a in soup.select("a[href]"):
+        href = (a.get("href") or "").strip()
+        if not href or href.startswith("#"):
+            continue
+        full = urljoin(base_url, href).split("#")[0].rstrip("/")
+        parsed = urlparse(full)
+        if parsed.netloc.lower() != host:
+            continue
+        path = parsed.path.rstrip("/")
+        if not re.match(r"^/news/[^/]+$", path, re.I):
+            continue
+        if full in seen:
+            continue
+        seen.add(full)
+        out.append(full)
+
+    logger.info("USRF listing: %d article URLs", len(out))
+    return out
+
+
+def _process_community_news_sources(
+    src: dict[str, Any],
+    soup: BeautifulSoup,
+    api: FullpitchAPI,
+    genai_client,
+    existing_urls: set[str],
+    summary: dict[str, Any],
+) -> int:
+    """Ingest up to 3 US Rugby Foundation articles per run (published on or after 2026-05-01)."""
+    base_url = src["url"]
+    article_urls = _extract_usrf_article_urls(soup, base_url)
+    written_here = 0
+    max_per_run = 3
+
+    for article_url in article_urls:
+        if written_here >= max_per_run:
+            break
+        if article_url in existing_urls:
+            summary["skipped_duplicate"] += 1
+            continue
+
+        try:
+            article_html = fetch_text(article_url)
+        except ScraperError as exc:
+            logger.warning("Failed to fetch community article %s: %s", article_url, exc)
+            summary["errors"].append(str(exc))
+            continue
+
+        page_soup = BeautifulSoup(article_html, "html.parser")
+        h1 = page_soup.find("h1")
+        title = _clean_entity_text(h1.get_text(" ", strip=True) if h1 else "")
+        if not title or len(title) < 10:
+            og_title = page_soup.select_one('meta[property="og:title"]')
+            title = _clean_entity_text((og_title.get("content") or "").strip() if og_title else "")
+        if not title or len(title) < 10:
+            summary["skipped_irrelevant"] += 1
+            continue
+        if _should_skip_community_fundraising_title(title):
+            logger.info("Skipping community article (title filter): %s", title[:80])
+            summary["skipped_irrelevant"] += 1
+            continue
+
+        published_iso = extract_publish_date(article_html)
+        pub_dt = _parse_iso_to_utc(published_iso)
+        if pub_dt is None:
+            logger.info("Skipping community article (no parseable date): %s", title[:80])
+            summary["skipped_irrelevant"] += 1
+            continue
+        if pub_dt < COMMUNITY_INGEST_MIN:
+            logger.info("Skipping community article (before 2026-05-01): %s", title[:80])
+            continue
+
+        image_url = extract_og_image_from_html(article_html, article_url)
+        if not image_url:
+            image_url = extract_og_image(article_url)
+
+        article_text = extract_page_text_from_html(article_html) or ""
+        if not has_minimum_content(article_text, min_chars=100):
+            summary["skipped_irrelevant"] += 1
+            continue
+
+        article_summary = _generate_summary(
+            title, article_text, "US Rugby Foundation", genai_client
+        )
+        if not article_summary:
+            article_summary = gemini_summarize(article_url, article_text) or ""
+        article_summary = normalize_feed_summary(_clean_entity_text(article_summary))
+        if not article_summary:
+            summary["skipped_irrelevant"] += 1
+            continue
+
+        title = shorten_title(title, genai_client)
+        try:
+            api.create_article(
+                {
+                    "title": title,
+                    "url": article_url,
+                    "source": "US Rugby Foundation",
+                    "publishedDate": published_iso,
+                    "league": "community",
+                    "summary": article_summary,
+                    "content": article_text[:2000] if article_text else None,
+                    "imageUrl": image_url,
+                    "agentName": "news-agent",
+                    "tags": ["community"],
+                }
+            )
+            existing_urls.add(article_url)
+            summary["written"] += 1
+            written_here += 1
+        except FullpitchAPIError as exc:
+            msg = f"Failed to ingest community article '{title[:60]}': {exc}"
+            logger.error(msg)
+            summary["errors"].append(msg)
+
+    return len(article_urls)
+
+
 # ── Core logic ────────────────────────────────────────────────────────────────
 
 
@@ -258,7 +418,23 @@ def run_news_agent() -> dict[str, Any]:
 
     for src in web_sources:
         url = src["url"]
-        league = src.get("league")
+        league = (src.get("league") or "").strip().lower()
+
+        if league == "community":
+            try:
+                logger.info("Fetching web source: %s", url)
+                soup = fetch_html(url)
+            except ScraperError as exc:
+                msg = f"Failed to fetch {url}: {exc}"
+                logger.error(msg)
+                summary["errors"].append(msg)
+                continue
+            n_listed = _process_community_news_sources(
+                src, soup, api, genai_client, existing_urls, summary
+            )
+            summary["web_found"] += n_listed
+            continue
+
         needs_filter = league == "general"
 
         try:
@@ -404,6 +580,8 @@ def _classify_league(title: str, content: str, client) -> str:
                 "competing internationally.\n"
                 "- club: club rugby or territorial unions.\n"
                 "- high-school: high school rugby programs.\n"
+                "- community: US Rugby Foundation-style grassroots US rugby — scholarships, grants, "
+                "youth programs, Hall of Fame, urban rugby, community milestones (not Eagles national team).\n"
                 "- general: USA Rugby organization news, coaching certifications, policy "
                 "updates, referee education, or anything that does not fit the categories above.\n\n"
                 f"Title: {title}\n"
@@ -412,7 +590,16 @@ def _classify_league(title: str, content: str, client) -> str:
             ),
         )
         category = resp.text.strip().lower()
-        valid = {"mlr", "wer", "eagles", "club", "high-school", "general", *VALID_COLLEGE_LEAGUES}
+        valid = {
+            "mlr",
+            "wer",
+            "eagles",
+            "club",
+            "high-school",
+            "general",
+            "community",
+            *VALID_COLLEGE_LEAGUES,
+        }
         if category == "college":
             return classify_college_league(title, content, default="college")
         if category in valid:

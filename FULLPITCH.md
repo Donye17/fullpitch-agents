@@ -169,7 +169,7 @@ Every content record tagged at ingest. Use only these exact strings:
 
 | Field | Valid Values |
 |-------|-------------|
-| `league` | `mlr` `wer` `college` `craa-d1a` `craa-d1aa` `craa-women` `ncr-d1` `ncr-d2` `ncr-d3` `ncr-women` `club` `high-school` `eagles` `world` `general` |
+| `league` | `mlr` `wer` `college` `craa-d1a` `craa-d1aa` `craa-women` `ncr-d1` `ncr-d2` `ncr-d3` `ncr-women` `nira` `club` `high-school` `eagles` `community` `world` `general` |
 | `level` | `professional` `college` `club` `high-school` `international` |
 | `region` | `northeast` `southeast` `midwest` `southwest` `west` `national` |
 | `status` | `live` `final` `scheduled` `postponed` `cancelled` |
@@ -528,6 +528,7 @@ These must be copied to new project before deleting old folder:
 | May 2026 | MLR and WER live data sources moved to NA Rugby DB after majorleague.rugby score URLs returned 404; shared parser handles standings, fixtures, results, team aliases, and a 1-second NA Rugby DB request pause. |
 | May 2026 | Fixed NA Rugby DB team resolution: fixture parsing now uses left/right team links for home/away, and API team lookup no longer treats the first `/teams` result as a name match. |
 | May 2026 | News agent now extracts source `publishedDate` from article meta/time/JSON-LD without falling back to today; fast maintenance backfills missing `publishedDate` from source pages. |
+| May 2026 | `community` league tag + US Rugby Foundation (`usrugbyfoundation.org/news`) source: `news_agent.py` dedicated path (max 3/run, published ≥ 2026-05-01, fundraising title skips, `source` = US Rugby Foundation), maintenance `VALID_LEAGUES` + Gemini prompt include `community`. |
 | May 2026 | CRAA agent added as the 9th boss sub-agent for CRAA news, D1A power rankings, and postseason result ingestion from craa.rugby every 2 hours. |
 | May 2026 | Article summary prompt updated to require 150-200 words, 4-6 full sentences, specific names/scores/stats, and flowing prose; news ingest now summarizes full article page text. |
 | May 2026 | Article extraction now uses shared URL/title/content heuristics so `news_agent.py` and `craa_agent.py` only ingest real article pages, not navigation/category/menu links. |
@@ -536,4 +537,4 @@ These must be copied to new project before deleting old folder:
 
 ---
 
-*Last updated: May 2026 — Josh Russo*
+*Last updated: May 2026 — Josh Russo (community league + USRF news_agent)*

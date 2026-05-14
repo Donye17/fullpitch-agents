@@ -90,6 +90,8 @@ VALID_LEAGUES = {
     "club",
     "high-school",
     "general",
+    "community",
+    "world",
 }
 
 
@@ -208,6 +210,9 @@ def _classify_league_with_gemini(title: str, content: str, client) -> str | None
                 "competing internationally.\n"
                 "- club: club rugby or territorial unions.\n"
                 "- high-school: high school rugby programs.\n"
+                "- community: US Rugby Foundation-style grassroots stories — scholarships, "
+                "grants, youth programs, Hall of Fame, urban rugby, player development, "
+                "community milestones (not USA Eagles national team).\n"
                 "- general: USA Rugby organization news, coaching certifications, policy "
                 "updates, referee education, or anything that does not fit the categories above.\n\n"
                 f"Title: {title}\n"
