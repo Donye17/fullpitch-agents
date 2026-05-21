@@ -558,25 +558,27 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
         status = parsed["status"]
         if score and status in {"live", "final"}:
             home_score, away_score = score
-            api.upsert_match(
-                {
-                    "homeTeamId": match["homeTeamId"],
-                    "awayTeamId": match["awayTeamId"],
-                    "homeScore": home_score,
-                    "awayScore": away_score,
-                    "matchDate": match["kickoffTime"],
-                    "league": "mlr",
-                    "season": season,
-                    "status": status,
-                    "agentName": "mlr-agent",
-                    "region": "national",
-                    "events": {
-                        "sourceUrl": url,
-                        "liveScoreSource": "majorleague.rugby",
-                        "needs_verification": status == "final",
-                    },
-                }
-            )
+            week = _week_from_match(match)
+            payload: dict[str, Any] = {
+                "homeTeamId": match["homeTeamId"],
+                "awayTeamId": match["awayTeamId"],
+                "homeScore": home_score,
+                "awayScore": away_score,
+                "matchDate": match["kickoffTime"],
+                "league": "mlr",
+                "season": season,
+                "status": status,
+                "agentName": "mlr-agent",
+                "region": "national",
+                "events": {
+                    "sourceUrl": url,
+                    "liveScoreSource": "majorleague.rugby",
+                    "needs_verification": status == "final",
+                },
+            }
+            if week:
+                payload["round"] = str(week)
+            api.upsert_match(payload)
             summary["live_matches_updated"] += 1
             logger.info("Updated MLR live page score: %s %s-%s %s (%s)", _match_team_name(match, "home"), home_score, away_score, _match_team_name(match, "away"), status)
             if status == "final":

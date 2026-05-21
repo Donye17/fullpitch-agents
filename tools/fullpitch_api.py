@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -230,10 +231,46 @@ class FullpitchAPI:
 
     # ── WRITE methods ─────────────────────────────────────────────────────
 
+    def _normalize_match_upsert_payload(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Align with app ingest: season + round, or same calendar day (not exact kickoff)."""
+        payload = dict(data)
+        round_val = payload.get("round") or payload.get("week")
+        if round_val is not None and str(round_val).strip():
+            payload["round"] = str(round_val).strip()
+            payload.pop("week", None)
+            return payload
+
+        payload.pop("round", None)
+        payload.pop("week", None)
+        match_date = payload.get("matchDate")
+        if not match_date:
+            return payload
+
+        try:
+            raw = str(match_date).strip().replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(raw)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.astimezone(timezone.utc)
+            noon = datetime(
+                parsed.year,
+                parsed.month,
+                parsed.day,
+                12,
+                0,
+                0,
+                tzinfo=timezone.utc,
+            )
+            payload["matchDate"] = noon.isoformat()
+        except ValueError:
+            logger.warning("Could not normalize matchDate for upsert: %s", match_date)
+        return payload
+
     def upsert_match(self, data: dict[str, Any]) -> dict[str, Any]:
         """POST /api/v1/ingest/match — idempotent match upsert."""
-        logger.info("Upserting match: %s vs %s", data.get("homeTeamId", "?"), data.get("awayTeamId", "?"))
-        return self._post("match", data)
+        payload = self._normalize_match_upsert_payload(data)
+        logger.info("Upserting match: %s vs %s", payload.get("homeTeamId", "?"), payload.get("awayTeamId", "?"))
+        return self._post("match", payload)
 
     def update_match(self, match_id: str, data: dict[str, Any]) -> dict[str, Any]:
         """PATCH /api/v1/matches/[id] — protected partial match update."""
