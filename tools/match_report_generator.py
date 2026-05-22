@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
-from tools.editorial_ai import normalize_feed_summary, shorten_title
+from tools.editorial_ai import normalize_feed_summary
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 from tools.scraper import ScraperError, extract_og_image_from_html, fetch_text
@@ -21,6 +21,38 @@ logger = logging.getLogger(__name__)
 
 MLR_MATCH_BASE_URL = "https://www.majorleague.rugby/matches"
 FULLPITCH_REPORT_BASE_URL = "https://fullpitch.app/news/match-report"
+
+TEAM_SHORT_NAMES = {
+    "New England Free Jacks": "Free Jacks",
+    "California Legion": "Legion",
+    "Chicago Hounds": "Hounds",
+    "Seattle Seawolves": "Seawolves",
+    "Old Glory DC": "Old Glory",
+    "Anthem RC": "Anthem",
+    "Bay Breakers": "Breakers",
+    "Boston Banshees": "Banshees",
+    "Chicago Tempest": "Tempest",
+    "Denver Onyx": "Onyx",
+    "New York Exiles": "Exiles",
+    "TC Gemini": "Gemini",
+}
+
+
+def _short_team_name(name: str) -> str:
+    return TEAM_SHORT_NAMES.get(name, name)
+
+
+def _build_match_report_title(
+    home_team: str,
+    away_team: str,
+    home_score: int,
+    away_score: int,
+    week: int | None,
+) -> str:
+    home = _short_team_name(home_team)
+    away = _short_team_name(away_team)
+    week_part = f"Week {week} " if week else ""
+    return f"{home} {home_score}-{away_score} {away} | {week_part}Match Report"
 
 
 def _get_genai_client():
@@ -234,8 +266,7 @@ def generate_match_report(
     )
     generated = _call_gemini(_prompt(match_data))
     report = generated or _fallback_report(home_team, away_team, home_score, away_score, match_data)
-    raw_title = f"{home_team} {home_score}-{away_score} {away_team} | {league.upper()}{f' Week {week}' if week else ''} Match Report"
-    title = shorten_title(raw_title, _get_genai_client())
+    title = _build_match_report_title(home_team, away_team, home_score, away_score, week)
 
     try:
         response = api.create_article(

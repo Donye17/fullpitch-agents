@@ -535,7 +535,8 @@ These must be copied to new project before deleting old folder:
 | May 2026 | Article extraction now uses shared URL/title/content heuristics so `news_agent.py` and `craa_agent.py` only ingest real article pages, not navigation/category/menu links. |
 | May 2026 | Clerk — roles in `publicMetadata.role` (`admin` \| `program_rep` \| `user`); route gating in `clerkMiddleware` + `clerkClient.users.getUser`; webhooks via `verifyWebhook` + `CLERK_WEBHOOK_SIGNING_SECRET` |
 | Apr 2026 | Brand book and homepage mockup finalized |
+| May 2026 | Block Brazilian TJRS court spam in `video_agent` + fast maintenance; deactivate `TJRS` source; allow only `Jacks Rangers` channel; title-based league corrections; match report titles use short team names without `\| MLR`. |
 
 ---
 
-*Last updated: May 2026 — Josh Russo (community league + USRF news_agent)*
+*Last updated: May 2026 — Josh Russo*

@@ -312,6 +312,11 @@ class FullpitchAPI:
         logger.info("Deleting video %s", video_id)
         return self._delete(f"videos/{video_id}")
 
+    def update_source(self, source_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """PATCH /api/v1/sources/[id] — protected partial source update."""
+        logger.info("Updating source %s: %s", source_id, ", ".join(data.keys()))
+        return self._patch(f"sources/{source_id}", data)
+
     def upsert_player(self, data: dict[str, Any]) -> dict[str, Any]:
         """POST /api/v1/ingest/player — idempotent player upsert."""
         logger.info("Upserting player: %s", data.get("name", "?"))

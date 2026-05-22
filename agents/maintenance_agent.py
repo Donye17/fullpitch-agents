@@ -27,7 +27,12 @@ from tools.scraper import (
     fetch_text,
     gemini_summarize,
 )
-from tools.youtube_channels import approved_channel_terms, is_approved_youtube_channel
+from tools.match_report_generator import TEAM_SHORT_NAMES
+from tools.youtube_channels import (
+    approved_channel_terms,
+    is_approved_youtube_channel,
+    is_blocked_youtube_channel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +71,29 @@ SPAM_VIDEO_SOURCE_PATTERNS = (
     re.compile(r"\bjornada\b", re.I),
     re.compile(r"\blive\s*c1\b", re.I),
     re.compile(r"\bh&n\b", re.I),
+)
+FAST_MODE_BLOCKED_VIDEO_SOURCE_NAMES = {"tjrs"}
+FAST_MODE_BLOCKED_VIDEO_TITLE_MARKERS = (
+    "redação conectada",
+    "redacao conectada",
+    "tribunal de justiça",
+    "tribunal de justica",
+)
+TITLE_LEAGUE_CORRECTIONS: tuple[tuple[str, str], ...] = (
+    ("free jacks", "mlr"),
+    ("seawolves", "mlr"),
+    ("chicago hounds", "mlr"),
+    ("old glory dc", "mlr"),
+    ("california legion", "mlr"),
+    ("cal legion", "mlr"),
+    ("anthem rc", "mlr"),
+    ("bay breakers", "wer"),
+    ("boston banshees", "wer"),
+    ("chicago tempest", "wer"),
+    ("denver onyx", "wer"),
+    ("new york exiles", "wer"),
+    ("ny exiles", "wer"),
+    ("tc gemini", "wer"),
 )
 
 TITLE_LEAGUE_RULES = (
@@ -138,7 +166,56 @@ def _is_spam_video_source(video: dict[str, Any]) -> bool:
         _unescape_text(video.get("channelName")),
         _unescape_text(video.get("source")),
     ]
+    if any(is_blocked_youtube_channel(source_name) for source_name in source_names):
+        return True
     return any(pattern.search(source_name) for source_name in source_names for pattern in SPAM_VIDEO_SOURCE_PATTERNS)
+
+
+def _is_fast_mode_blocked_video(video: dict[str, Any]) -> bool:
+    source_name = _unescape_text(video.get("sourceName")).lower()
+    if source_name in FAST_MODE_BLOCKED_VIDEO_SOURCE_NAMES:
+        return True
+
+    channel_name = _unescape_text(video.get("channelName"))
+    if is_blocked_youtube_channel(channel_name):
+        return True
+
+    title = _unescape_text(video.get("title")).lower()
+    return any(marker in title for marker in FAST_MODE_BLOCKED_VIDEO_TITLE_MARKERS)
+
+
+def _infer_league_from_title(title: str) -> str | None:
+    lowered = title.lower()
+    if "legion" in lowered and "chicago" in lowered:
+        return "mlr"
+
+    for marker, league in TITLE_LEAGUE_CORRECTIONS:
+        if marker in lowered:
+            return league
+
+    return None
+
+
+def _is_match_report_article(article: dict[str, Any]) -> bool:
+    tags = article.get("tags") or []
+    if isinstance(tags, list) and any(str(tag).lower() == "match-report" for tag in tags):
+        return True
+    source_url = (article.get("sourceUrl") or "").lower()
+    return "/news/match-report/" in source_url
+
+
+def _clean_match_report_title(title: str) -> str | None:
+    if "| MLR" not in title and "| WER" not in title:
+        return None
+
+    updated = title.replace("| MLR", "|").replace("| WER", "|")
+    for long_name, short_name in TEAM_SHORT_NAMES.items():
+        if long_name in updated:
+            updated = updated.replace(long_name, short_name)
+
+    updated = re.sub(r"\s+\|", " |", updated)
+    updated = " ".join(updated.split())
+    return updated if updated != title else None
 
 
 def _is_unapproved_video_source(video: dict[str, Any], approved_channels: set[str]) -> bool:
@@ -470,6 +547,97 @@ def _repair_video(video: dict[str, Any], api: FullpitchAPI, approved_channels: s
     return {"fixed": 1, "deleted": 0}
 
 
+def _deactivate_tjrs_source(api: FullpitchAPI) -> bool:
+    """Deactivate ambiguous TJRS YouTube source (Brazilian court vs rugby podcast)."""
+    try:
+        sources = api.get_sources(type="youtube")
+    except FullpitchAPIError as exc:
+        logger.warning("Failed to fetch sources for TJRS deactivation: %s", exc)
+        return False
+
+    for source in sources:
+        if (source.get("name") or "").strip().upper() != "TJRS":
+            continue
+        if source.get("active") is False:
+            logger.info("TJRS source already inactive")
+            return True
+        try:
+            api.update_source(source["id"], {"active": False})
+            logger.info("Deactivated TJRS YouTube source (ambiguous with Brazilian court channel)")
+            return True
+        except FullpitchAPIError as exc:
+            logger.warning("Failed to deactivate TJRS source: %s", exc)
+    return False
+
+
+def _run_fast_video_cleanup(api: FullpitchAPI) -> dict[str, Any]:
+    summary: dict[str, Any] = {"videos_checked": 0, "videos_deleted": 0, "errors": []}
+    try:
+        videos = _all_videos(api)
+    except FullpitchAPIError as exc:
+        summary["errors"].append(str(exc))
+        return summary
+
+    for video in videos:
+        summary["videos_checked"] += 1
+        if not _is_fast_mode_blocked_video(video):
+            continue
+        title = _unescape_text(video.get("title")) or video.get("id") or "unknown"
+        try:
+            api.delete_video(video["id"])
+            summary["videos_deleted"] += 1
+            logger.info("Fast maintenance: deleted blocked video %s", title)
+        except Exception as exc:
+            logger.exception("Fast video deletion failed for %s", title)
+            summary["errors"].append(f"{title}: {exc}")
+        time.sleep(REQUEST_DELAY_SECONDS)
+
+    return summary
+
+
+def _run_title_league_corrections(api: FullpitchAPI, articles: list[dict[str, Any]]) -> dict[str, Any]:
+    summary: dict[str, Any] = {"articles_checked": 0, "league_tags_fixed": 0, "errors": []}
+    for article in articles:
+        summary["articles_checked"] += 1
+        title = _unescape_text(article.get("title"))
+        inferred = _infer_league_from_title(title)
+        if not inferred:
+            continue
+        current = (article.get("league") or "").lower()
+        if current == inferred:
+            continue
+        try:
+            api.update_article(article["id"], {"league": inferred})
+            summary["league_tags_fixed"] += 1
+            logger.info("Fixed league tag: %s", title)
+        except Exception as exc:
+            logger.exception("League tag correction failed for %s", title)
+            summary["errors"].append(f"{title}: {exc}")
+        time.sleep(REQUEST_DELAY_SECONDS)
+    return summary
+
+
+def _run_match_report_title_cleanup(api: FullpitchAPI, articles: list[dict[str, Any]]) -> dict[str, Any]:
+    summary: dict[str, Any] = {"articles_checked": 0, "titles_fixed": 0, "errors": []}
+    for article in articles:
+        if not _is_match_report_article(article):
+            continue
+        summary["articles_checked"] += 1
+        title = _unescape_text(article.get("title"))
+        cleaned = _clean_match_report_title(title)
+        if not cleaned:
+            continue
+        try:
+            api.update_article(article["id"], {"title": cleaned})
+            summary["titles_fixed"] += 1
+            logger.info("Fast maintenance: cleaned match report title: %s → %s", title, cleaned)
+        except Exception as exc:
+            logger.exception("Match report title cleanup failed for %s", title)
+            summary["errors"].append(f"{title}: {exc}")
+        time.sleep(REQUEST_DELAY_SECONDS)
+    return summary
+
+
 def _run_fast_title_shortening(api: FullpitchAPI, genai_client) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "articles_checked": 0,
@@ -534,12 +702,25 @@ def run_maintenance_agent() -> dict[str, Any]:
     result: dict[str, Any] = {"fast": None, "fast_title_shortening": None, "full": None}
     summary_budget = {"remaining": MAX_SUMMARY_REPAIRS_PER_RUN}
 
+    result["tjrs_source_deactivated"] = _deactivate_tjrs_source(api)
+    result["fast_video_cleanup"] = _run_fast_video_cleanup(api)
+
     try:
         fast_articles = _recent_articles(api)
     except FullpitchAPIError as exc:
         logger.error("Failed to fetch recent articles for fast maintenance: %s", exc)
         result["fast"] = {"errors": [str(exc)]}
     else:
+        try:
+            correction_articles = _all_articles(api)
+        except FullpitchAPIError as exc:
+            logger.error("Failed to fetch articles for league corrections: %s", exc)
+            correction_articles = fast_articles
+            result["fast_league_corrections"] = {"errors": [str(exc)]}
+        else:
+            result["fast_league_corrections"] = _run_title_league_corrections(api, correction_articles)
+            result["fast_match_report_titles"] = _run_match_report_title_cleanup(api, correction_articles)
+
         result["fast"] = _run_mode(
             mode_label="Fast",
             articles=fast_articles,

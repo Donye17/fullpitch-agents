@@ -20,7 +20,11 @@ import httpx
 from tools.college_leagues import classify_college_league, decode_html
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.scraper import ScraperError, fetch_html
-from tools.youtube_channels import approved_channel_terms, is_approved_youtube_channel
+from tools.youtube_channels import (
+    approved_channel_terms,
+    is_approved_youtube_channel,
+    is_blocked_youtube_channel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +72,9 @@ def _parse_iso_date(text: str) -> datetime | None:
 
 
 def _is_spam_channel(channel: str, title: str = "", description: str = "") -> bool:
+    if is_blocked_youtube_channel(channel):
+        return True
+
     if any(pattern.search(channel) for pattern in SPAM_CHANNEL_PATTERNS):
         return True
 
