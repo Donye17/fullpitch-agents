@@ -23,6 +23,7 @@ from agents.narugbydb import (
 )
 from tools.final_score_verification import on_match_final
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.match_status import mark_past_matches_final
 from tools.scraper import ScraperError, fetch_text
 
 logger = logging.getLogger(__name__)
@@ -729,6 +730,8 @@ def run_mlr_agent() -> dict[str, Any]:
         msg = f"Failed to fetch MLR standings from NA Rugby DB: {exc}"
         logger.error(msg)
         summary["errors"].append(msg)
+
+    summary["past_matches_marked_final"] = mark_past_matches_final(api, "mlr")
 
     logger.info(
         "MLR agent summary: %d matches found, %d matches upserted, %d standings upserted, %d errors",

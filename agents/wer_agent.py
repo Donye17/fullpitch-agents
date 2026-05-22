@@ -18,6 +18,7 @@ from agents.narugbydb import (
 )
 from tools.browser import fetch_js_page
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
+from tools.match_status import mark_past_matches_final
 from tools.schedule import is_tournament_active
 from tools.scraper import ScraperError
 
@@ -211,6 +212,8 @@ def run_wer_agent() -> dict[str, Any]:
             summary["errors"].append(msg)
     else:
         logger.info("WER standings: skipping browser scrape, not weekend")
+
+    summary["past_matches_marked_final"] = mark_past_matches_final(api, "wer")
 
     logger.info(
         "WER agent summary: %d matches found, %d matches upserted, %d standings upserted, %d errors",
