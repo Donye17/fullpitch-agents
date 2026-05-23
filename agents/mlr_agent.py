@@ -562,6 +562,22 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
         page_html: str | None = None
 
         if status in {"live", "final"}:
+            current_home = match.get("homeScore") or 0
+            current_away = match.get("awayScore") or 0
+
+            if home_score < current_home or away_score < current_away:
+                logger.warning(
+                    "Rejecting score regression %s vs %s: "
+                    "DB has %s-%s, parser returned %s-%s — skipping",
+                    _match_team_name(match, "home"),
+                    _match_team_name(match, "away"),
+                    current_home,
+                    current_away,
+                    home_score,
+                    away_score,
+                )
+                continue
+
             week = _week_from_match(match)
             payload: dict[str, Any] = {
                 "homeTeamId": match["homeTeamId"],

@@ -126,6 +126,22 @@ def _check_live_wer_matches(api: FullpitchAPI, season: str, summary: dict[str, A
         if status not in {"live", "final"}:
             continue
 
+        current_home = match.get("homeScore") or 0
+        current_away = match.get("awayScore") or 0
+
+        if home_score < current_home or away_score < current_away:
+            logger.warning(
+                "Rejecting score regression %s vs %s: "
+                "DB has %s-%s, parser returned %s-%s — skipping",
+                _match_team_name(match, "home"),
+                _match_team_name(match, "away"),
+                current_home,
+                current_away,
+                home_score,
+                away_score,
+            )
+            continue
+
         if (
             match.get("homeScore") == home_score
             and match.get("awayScore") == away_score
