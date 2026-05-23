@@ -602,7 +602,6 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
                         "teamId": player["teamId"],
                         "season": season,
                         "jerseyNumber": player["jerseyNumber"],
-                        "position": str(player["jerseyNumber"]),
                         "agentName": "mlr-agent",
                     }
                 )
