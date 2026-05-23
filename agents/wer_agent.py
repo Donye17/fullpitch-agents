@@ -16,16 +16,20 @@ from agents.narugbydb import (
     parse_fixtures_page,
     resolve_team,
 )
+from agents.mlr_agent import _is_today_or_live
+from tools.final_score_verification import on_match_final
 from tools.browser import fetch_js_page
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.match_status import mark_past_matches_final
 from tools.schedule import is_tournament_active
 from tools.scraper import ScraperError
+from tools.screenshot_scores import fetch_live_score_via_screenshot
 
 logger = logging.getLogger(__name__)
 
 WER_STANDINGS_URL = "https://narugbydb.com/2026-wer-season-standings/"
 WER_PUBLIC_STANDINGS_URL = "https://www.womenseliterugby.us/standings"
+WER_PUBLIC_SCORES_URL = "https://www.womenseliterugby.us/scores"
 WER_FIXTURES_URL = "https://narugbydb.com/calendar/2026-wer-fixtures-results/"
 WER_SEASON = "2026"
 WER_TEAM_NAMES = {
@@ -90,10 +94,94 @@ def scrape_wer_standings(api: FullpitchAPI) -> int:
     return 0
 
 
+def _match_team_name(match: dict[str, Any], side: str) -> str:
+    team = match.get(f"{side}Team") or {}
+    return team.get("name") or team.get("shortName") or team.get("abbreviation") or ""
+
+
+def _build_wer_match_page_url(match: dict[str, Any]) -> str:
+    return WER_PUBLIC_SCORES_URL
+
+
+def _check_live_wer_matches(api: FullpitchAPI, season: str, summary: dict[str, Any]) -> None:
+    matches = api.get_matches(league="wer", season=season, status=["scheduled", "live"], limit=100)
+    targets = [match for match in matches if _is_today_or_live(match)]
+    summary["live_matches_checked"] = len(targets)
+
+    for match in targets:
+        current_status = str(match.get("status") or "").lower()
+        if current_status == "completed":
+            continue  # already finalized, skip
+
+        url = _build_wer_match_page_url(match)
+        parsed = fetch_live_score_via_screenshot(url)
+        if parsed is None:
+            continue
+
+        home_score = parsed["home_score"]
+        away_score = parsed["away_score"]
+        status = parsed["status"]
+        period = parsed.get("period")
+
+        if status not in {"live", "final"}:
+            continue
+
+        if (
+            match.get("homeScore") == home_score
+            and match.get("awayScore") == away_score
+            and current_status == status
+        ):
+            continue
+
+        match_id = match.get("id")
+        if not match_id:
+            continue
+
+        try:
+            api.update_match(
+                match_id,
+                {
+                    "homeScore": home_score,
+                    "awayScore": away_score,
+                    "status": status,
+                    "events": {
+                        "sourceUrl": url,
+                        "liveScoreSource": "womenseliterugby.us",
+                        "needs_verification": status == "final",
+                        **({"period": period} if period else {}),
+                    },
+                },
+            )
+            summary["live_matches_updated"] += 1
+            logger.info(
+                "Updated WER live score: %s %s-%s %s (%s)",
+                _match_team_name(match, "home"),
+                home_score,
+                away_score,
+                _match_team_name(match, "away"),
+                status,
+            )
+            if period == "FT" or status == "final":
+                on_match_final(
+                    match,
+                    (home_score, away_score),
+                    match_slug=url,
+                    api=api,
+                )
+        except FullpitchAPIError as exc:
+            msg = f"Failed to update WER live match {_match_team_name(match, 'home')} vs {_match_team_name(match, 'away')}: {exc}"
+            logger.warning(msg)
+            summary["errors"].append(msg)
+
+
 def _ingest_matches(api: FullpitchAPI, season: str, matches: list[dict[str, Any]], summary: dict[str, Any]) -> None:
     summary["matches_found"] = len(matches)
 
     for parsed in matches:
+        ingest_status = str(parsed.get("status") or "").lower()
+        if ingest_status in {"completed", "final"}:
+            continue  # live loop owns completed matches
+
         home_name = parsed["home_name"]
         away_name = parsed["away_name"]
         if home_name not in WER_TEAM_NAMES or away_name not in WER_TEAM_NAMES:
@@ -192,6 +280,8 @@ def run_wer_agent() -> dict[str, Any]:
     summary: dict[str, Any] = {
         "matches_found": 0,
         "matches_added": 0,
+        "live_matches_checked": 0,
+        "live_matches_updated": 0,
         "standings_updated": 0,
         "errors": [],
     }
@@ -200,6 +290,13 @@ def run_wer_agent() -> dict[str, Any]:
         _ingest_matches(api, season, _fetch_wer_fixtures(fixtures_url), summary)
     except ScraperError as exc:
         msg = f"Failed to fetch WER fixtures from NA Rugby DB: {exc}"
+        logger.error(msg)
+        summary["errors"].append(msg)
+
+    try:
+        _check_live_wer_matches(api, season, summary)
+    except FullpitchAPIError as exc:
+        msg = f"Failed to check WER live match pages: {exc}"
         logger.error(msg)
         summary["errors"].append(msg)
 

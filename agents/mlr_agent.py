@@ -25,6 +25,7 @@ from tools.final_score_verification import on_match_final
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
 from tools.match_status import mark_past_matches_final
 from tools.scraper import ScraperError, fetch_text
+from tools.screenshot_scores import fetch_live_score_via_screenshot
 
 logger = logging.getLogger(__name__)
 
@@ -541,24 +542,26 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
     summary["live_matches_checked"] = len(targets)
 
     for match in targets:
+        current_status = str(match.get("status") or "").lower()
+        if current_status == "completed":
+            continue  # already finalized, skip
+
         url = _build_match_page_url(match)
         if not url:
             logger.warning("Could not build MLR match URL for %s vs %s", _match_team_name(match, "home"), _match_team_name(match, "away"))
             continue
 
-        try:
-            page_html = fetch_text(url, timeout=20.0)
-            parsed = _parse_mlr_match_page(page_html, match)
-        except ScraperError as exc:
-            msg = f"Failed to fetch MLR match page {url}: {exc}"
-            logger.warning(msg)
-            summary["errors"].append(msg)
+        parsed = fetch_live_score_via_screenshot(url)
+        if parsed is None:
             continue
 
-        score = parsed["score"]
+        home_score = parsed["home_score"]
+        away_score = parsed["away_score"]
         status = parsed["status"]
-        if score and status in {"live", "final"}:
-            home_score, away_score = score
+        period = parsed.get("period")
+        page_html: str | None = None
+
+        if status in {"live", "final"}:
             week = _week_from_match(match)
             payload: dict[str, Any] = {
                 "homeTeamId": match["homeTeamId"],
@@ -579,10 +582,16 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
             }
             if week:
                 payload["round"] = str(week)
+            if period:
+                payload["events"]["period"] = period
             api.upsert_match(payload)
             summary["live_matches_updated"] += 1
             logger.info("Updated MLR live page score: %s %s-%s %s (%s)", _match_team_name(match, "home"), home_score, away_score, _match_team_name(match, "away"), status)
             if status == "final":
+                try:
+                    page_html = fetch_text(url, timeout=20.0)
+                except ScraperError:
+                    page_html = None
                 on_match_final(
                     match,
                     (home_score, away_score),
@@ -593,7 +602,16 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
                     venue=match.get("venue"),
                 )
 
-        for player in parsed["lineups"]:
+        try:
+            page_html = page_html or fetch_text(url, timeout=20.0)
+            lineup_parsed = _parse_mlr_match_page(page_html, match)
+        except ScraperError as exc:
+            msg = f"Failed to fetch MLR match page for lineups {url}: {exc}"
+            logger.warning(msg)
+            summary["errors"].append(msg)
+            continue
+
+        for player in lineup_parsed["lineups"]:
             try:
                 api.upsert_player(
                     {
@@ -616,6 +634,10 @@ def _ingest_matches(api: FullpitchAPI, season: str, matches: list[dict[str, Any]
     summary["matches_found"] = len(matches)
 
     for parsed in matches:
+        ingest_status = str(parsed.get("status") or "").lower()
+        if ingest_status in {"completed", "final"}:
+            continue  # live loop owns completed matches
+
         home_name = parsed["home_name"]
         away_name = parsed["away_name"]
         home_team = resolve_team(api, home_name)

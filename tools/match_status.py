@@ -34,6 +34,20 @@ def _away_name(match: dict[str, Any]) -> str:
     return away.get("shortName") or away.get("name") or "Away"
 
 
+def _live_loop_already_finalized(match: dict[str, Any]) -> bool:
+    """Skip auto-finalization when the live score loop already wrote the result."""
+    events = match.get("events")
+    if not isinstance(events, dict):
+        return False
+
+    if not (events.get("liveScoreSource") or events.get("needs_verification")):
+        return False
+
+    home_score = match.get("homeScore")
+    away_score = match.get("awayScore")
+    return home_score is not None and away_score is not None
+
+
 def mark_past_matches_final(api: FullpitchAPI, league: str) -> int:
     """
     Any match where kickoff is more than 3 hours in the past and status is still
@@ -49,6 +63,14 @@ def mark_past_matches_final(api: FullpitchAPI, league: str) -> int:
         return 0
 
     for match in matches:
+        if _live_loop_already_finalized(match):
+            logger.info(
+                "Skipping mark_past_matches_final for live-owned match: %s vs %s",
+                _home_name(match),
+                _away_name(match),
+            )
+            continue
+
         kickoff_raw = match.get("kickoffTime") or match.get("matchDate")
         kickoff = _parse_match_datetime(kickoff_raw)
         if not kickoff or kickoff >= cutoff:
@@ -59,7 +81,7 @@ def mark_past_matches_final(api: FullpitchAPI, league: str) -> int:
             continue
 
         try:
-            api.patch_match(match_id, {"status": "final"})
+            api.update_match(match_id, {"status": "final"})
             marked += 1
             logger.info(
                 "Marked past match as final: %s vs %s %s",

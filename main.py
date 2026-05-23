@@ -46,7 +46,26 @@ AGENT_MAP = {
 
 BOSS_INTERVAL_SECONDS = 60 * 60
 LIVE_ACTIVE_SLEEP_SECONDS = 60
+LIVE_HT_SLEEP_SECONDS = 300
 LIVE_IDLE_SLEEP_SECONDS = 300
+
+
+def _build_live_match_url(match: dict) -> str | None:
+    league = str(match.get("league") or "").lower()
+    if league == "wer":
+        from agents.wer_agent import _build_wer_match_page_url
+
+        return _build_wer_match_page_url(match)
+    from agents.mlr_agent import _build_match_page_url
+
+    return _build_match_page_url(match)
+
+
+def _live_score_source(match: dict) -> str:
+    league = str(match.get("league") or "").lower()
+    if league == "wer":
+        return "womenseliterugby.us"
+    return "majorleague.rugby"
 
 
 def init_sentry() -> None:
@@ -69,41 +88,43 @@ def is_today_or_live(match: dict) -> bool:
     return _is_today_or_live(match)
 
 
-def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool:
-    from agents.mlr_agent import (
-        _build_match_page_url,
-        _match_team_name,
-        _week_from_match,
-        _parse_mlr_match_page,
-    )
+def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> str | None:
+    from agents.mlr_agent import _match_team_name, _week_from_match
     from tools.final_score_verification import on_match_final
-    from tools.scraper import fetch_text
+    from tools.screenshot_scores import fetch_live_score_via_screenshot
 
     api = api or FullpitchAPI()
-    url = _build_match_page_url(match)
+    url = _build_live_match_url(match)
     if not url:
         logger.warning(
-            "Live score tracker could not build MLR URL for %s vs %s",
+            "Live score tracker could not build URL for %s vs %s (league=%s)",
             _match_team_name(match, "home"),
             _match_team_name(match, "away"),
+            match.get("league"),
         )
-        return False
+        return None
 
-    page_html = fetch_text(url, timeout=20.0)
-    parsed = _parse_mlr_match_page(page_html, match)
-    score = parsed["score"]
-    status = parsed["status"]
-    if not score or status not in {"live", "final"}:
-        return False
-
-    home_score, away_score = score
     current_status = str(match.get("status") or "").lower()
+    if current_status == "completed":
+        return None
+
+    parsed = fetch_live_score_via_screenshot(url)
+    if parsed is None:
+        return None
+
+    home_score = parsed["home_score"]
+    away_score = parsed["away_score"]
+    status = parsed["status"]
+    period = parsed.get("period")
+    if status not in {"live", "final"}:
+        return period
+
     if (
         match.get("homeScore") == home_score
         and match.get("awayScore") == away_score
         and current_status == status
     ):
-        return False
+        return period
 
     api.update_match(
         match["id"],
@@ -113,8 +134,9 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool
             "status": status,
             "events": {
                 "sourceUrl": url,
-                "liveScoreSource": "majorleague.rugby",
+                "liveScoreSource": _live_score_source(match),
                 "needs_verification": status == "final",
+                **({"period": period} if period else {}),
             },
         },
     )
@@ -132,11 +154,10 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> bool
             (home_score, away_score),
             match_slug=url,
             api=api,
-            page_html=page_html,
-            week=_week_from_match(match),
+            week=_week_from_match(match) if str(match.get("league") or "").lower() == "mlr" else None,
             venue=match.get("venue"),
         )
-    return True
+    return period
 
 
 def live_score_loop() -> None:
@@ -145,17 +166,26 @@ def live_score_loop() -> None:
 
     while True:
         try:
-            matches = api.get_matches(league="mlr", status=["scheduled", "live"], limit=100)
+            matches = api.get_matches(league=["mlr", "wer"], status=["scheduled", "live"], limit=100)
             today_matches = [match for match in matches if is_today_or_live(match)]
 
             if today_matches:
                 logger.info("Live score tracker checking %d match(es)", len(today_matches))
+                periods: list[str] = []
                 for match in today_matches:
                     try:
-                        check_and_update_score(match, api)
+                        period = check_and_update_score(match, api)
+                        if period:
+                            periods.append(period)
                     except Exception as exc:
                         logger.error("Live score error for match %s: %s", match.get("id"), exc)
-                time.sleep(LIVE_ACTIVE_SLEEP_SECONDS)
+
+                if any(period == "HT" for period in periods):
+                    time.sleep(LIVE_HT_SLEEP_SECONDS)
+                elif any(period in {"1H", "2H"} for period in periods):
+                    time.sleep(LIVE_ACTIVE_SLEEP_SECONDS)
+                else:
+                    time.sleep(LIVE_IDLE_SLEEP_SECONDS)
             else:
                 time.sleep(LIVE_IDLE_SLEEP_SECONDS)
         except Exception as exc:

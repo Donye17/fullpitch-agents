@@ -121,6 +121,19 @@ class FullpitchAPI:
                     matches.append(match)
             return matches
 
+        if isinstance(league, (list, tuple)):
+            matches: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for item in league:
+                for match in self.get_matches(league=item, season=season, status=status, limit=limit, page=page):
+                    match_id = match.get("id")
+                    if match_id and match_id in seen:
+                        continue
+                    if match_id:
+                        seen.add(match_id)
+                    matches.append(match)
+            return matches
+
         params: dict[str, Any] = {"limit": limit, "page": page}
         if league:
             params["league"] = league
