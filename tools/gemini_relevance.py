@@ -1,4 +1,4 @@
-"""Shared batched Gemini relevance filters."""
+"""Shared Gemini models, token limits, and batched relevance filters."""
 
 from __future__ import annotations
 
@@ -8,7 +8,36 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-GEMINI_FREE_TIER_MODEL = "gemini-2.5-flash"
+# Cheap model — classification, relevance, structured extraction, summaries
+GEMINI_FREE_TIER_MODEL = "gemini-2.5-flash-lite"
+
+# High-quality model — match reports, spotlights, long-form content
+GEMINI_WRITING_PRO = "gemini-2.5-flash"
+
+MAX_OUTPUT_TOKENS_CLASSIFICATION = 256
+MAX_OUTPUT_TOKENS_SUMMARY = 1024
+MAX_OUTPUT_TOKENS_MATCH_REPORT = 4096
+
+
+def generate_gemini_content(
+    client,
+    model: str,
+    contents: Any,
+    *,
+    max_output_tokens: int | None = None,
+) -> Any:
+    """Call Gemini with an optional hard output token cap."""
+    from google.genai import types
+
+    config = None
+    if max_output_tokens is not None:
+        config = types.GenerateContentConfig(max_output_tokens=max_output_tokens)
+
+    return client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=config,
+    )
 
 
 def parse_relevant_numbers(value: str, count: int) -> set[int]:
@@ -42,9 +71,11 @@ def batch_relevance_check(
     )
 
     try:
-        response = client.models.generate_content(
-            model=GEMINI_FREE_TIER_MODEL,
-            contents=prompt,
+        response = generate_gemini_content(
+            client,
+            GEMINI_FREE_TIER_MODEL,
+            prompt,
+            max_output_tokens=MAX_OUTPUT_TOKENS_CLASSIFICATION,
         )
         relevant_numbers = parse_relevant_numbers(response.text, len(articles))
         logger.info(

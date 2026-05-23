@@ -13,7 +13,11 @@ from bs4 import BeautifulSoup
 
 from tools.editorial_ai import normalize_feed_summary
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
-from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
+from tools.gemini_relevance import (
+    GEMINI_WRITING_PRO,
+    MAX_OUTPUT_TOKENS_MATCH_REPORT,
+    generate_gemini_content,
+)
 from tools.scraper import ScraperError, extract_og_image_from_html, fetch_text
 from tools.text_utils import clean_text
 
@@ -192,9 +196,11 @@ def _call_gemini(prompt: str) -> str | None:
         return None
 
     try:
-        response = client.models.generate_content(
-            model=GEMINI_FREE_TIER_MODEL,
-            contents=prompt,
+        response = generate_gemini_content(
+            client,
+            GEMINI_WRITING_PRO,
+            prompt,
+            max_output_tokens=MAX_OUTPUT_TOKENS_MATCH_REPORT,
         )
         return clean_text(response.text)
     except Exception:

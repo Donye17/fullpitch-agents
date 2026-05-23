@@ -15,7 +15,6 @@ import time
 from dotenv import load_dotenv
 
 from tools.fullpitch_api import FullpitchAPI
-from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
 
 load_dotenv()
 
@@ -25,9 +24,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fullpitch-agents")
 
-GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
-GEMINI_WRITING_MID = GEMINI_FREE_TIER_MODEL
-GEMINI_WRITING_PRO = GEMINI_FREE_TIER_MODEL
+GEMINI_REASONING = "gemini-2.5-flash-lite"
+GEMINI_WRITING_MID = "gemini-2.5-flash-lite"
+GEMINI_WRITING_PRO = "gemini-2.5-flash"
 
 AGENT_MAP = {
     "boss": "agents.boss_agent",

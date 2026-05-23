@@ -20,7 +20,11 @@ import httpx
 from bs4 import BeautifulSoup
 
 from tools.editorial_ai import normalize_feed_summary
-from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
+from tools.gemini_relevance import (
+    GEMINI_FREE_TIER_MODEL,
+    MAX_OUTPUT_TOKENS_SUMMARY,
+    generate_gemini_content,
+)
 from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
@@ -310,9 +314,10 @@ def gemini_summarize(url: str, text: str | None = None) -> str | None:
         return None
 
     try:
-        response = client.models.generate_content(
-            model=GEMINI_WRITING_MID,
-            contents=(
+        response = generate_gemini_content(
+            client,
+            GEMINI_WRITING_MID,
+            (
                 "Write ONE tight paragraph summarizing this article for a US rugby news feed. "
                 "Max 60 words. Lead with the most important fact. Include who, what, where if relevant. "
                 "Write it like the opening paragraph of a newspaper story, not a full article, not bullet points. "
@@ -322,6 +327,7 @@ def gemini_summarize(url: str, text: str | None = None) -> str | None:
                 f"Article text: {text[:5000]}\n\n"
                 "Summary:"
             ),
+            max_output_tokens=MAX_OUTPUT_TOKENS_SUMMARY,
         )
         summary = normalize_feed_summary(response.text.strip())
         return summary or None

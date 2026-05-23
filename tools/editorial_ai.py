@@ -5,7 +5,12 @@ from __future__ import annotations
 import logging
 import re
 
-from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
+from tools.gemini_relevance import (
+    GEMINI_FREE_TIER_MODEL,
+    MAX_OUTPUT_TOKENS_CLASSIFICATION,
+    MAX_OUTPUT_TOKENS_SUMMARY,
+    generate_gemini_content,
+)
 from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
@@ -29,15 +34,17 @@ def shorten_title(title: str, client=None) -> str:
         return _fallback_short_title(cleaned)
 
     try:
-        response = client.models.generate_content(
-            model=GEMINI_FREE_TIER_MODEL,
-            contents=(
+        response = generate_gemini_content(
+            client,
+            GEMINI_FREE_TIER_MODEL,
+            (
                 "Rewrite this headline to exactly 5-7 words.\n"
                 "Keep the core news fact only.\n"
                 "Headline case. No punctuation at end.\n"
                 "Reply with ONLY the headline, nothing else.\n\n"
                 f"Original: {cleaned}\n\n"
             ),
+            max_output_tokens=MAX_OUTPUT_TOKENS_CLASSIFICATION,
         )
         shortened = _strip_trailing_punctuation(clean_text(response.text))
         if not shortened:

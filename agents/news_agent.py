@@ -28,7 +28,13 @@ from tools.article_filter import (
 from tools.college_leagues import VALID_COLLEGE_LEAGUES, classify_college_league
 from tools.editorial_ai import normalize_feed_summary, shorten_title
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
-from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL, batch_relevance_check
+from tools.gemini_relevance import (
+    GEMINI_FREE_TIER_MODEL,
+    MAX_OUTPUT_TOKENS_CLASSIFICATION,
+    MAX_OUTPUT_TOKENS_SUMMARY,
+    batch_relevance_check,
+    generate_gemini_content,
+)
 from tools.scraper import (
     ScraperError,
     extract_og_image,
@@ -47,6 +53,7 @@ GEMINI_REASONING = GEMINI_FREE_TIER_MODEL
 GEMINI_WRITING_MID = GEMINI_FREE_TIER_MODEL
 
 MAX_AGE_DAYS = 7
+MAX_ARTICLES_PER_RUN = 20
 HIGH_SCHOOL_KEYWORDS = (
     "high school",
     "girls nationals",
@@ -81,9 +88,11 @@ def _generate_summary(title: str, content: str, source: str, client) -> str | No
         prompt = template.replace("{title}", title).replace(
             "{source}", source
         ).replace("{content}", content[:4000])
-        resp = client.models.generate_content(
-            model=GEMINI_WRITING_MID,
-            contents=prompt,
+        resp = generate_gemini_content(
+            client,
+            GEMINI_WRITING_MID,
+            prompt,
+            max_output_tokens=MAX_OUTPUT_TOKENS_SUMMARY,
         )
         return normalize_feed_summary(resp.text)
     except Exception:
@@ -93,6 +102,39 @@ def _generate_summary(title: str, content: str, source: str, client) -> str | No
 
 def _cutoff_date() -> datetime:
     return datetime.now(timezone.utc) - timedelta(days=MAX_AGE_DAYS)
+
+
+def _article_recency(art: dict[str, Any]) -> datetime:
+    pub_date = _parse_date(art.get("date_text"))
+    return pub_date or datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _limit_articles_for_gemini(
+    articles: list[dict[str, Any]],
+    summary: dict[str, Any],
+    *,
+    existing_urls: set[str],
+    cutoff: datetime,
+) -> list[dict[str, Any]]:
+    """Keep only the most recent unprocessed articles within the hourly Gemini budget."""
+    remaining = MAX_ARTICLES_PER_RUN - summary.get("gemini_articles_used", 0)
+    if remaining <= 0:
+        return []
+
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
+    for art in articles:
+        article_url = art["url"]
+        if article_url in existing_urls:
+            continue
+        if not is_viable_article_candidate(title=art["title"], url=article_url):
+            continue
+        pub_date = _parse_date(art.get("date_text"))
+        if pub_date and pub_date < cutoff:
+            continue
+        candidates.append((_article_recency(art), art))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [art for _, art in candidates[:remaining]]
 
 
 def _domain(url: str) -> str:
@@ -300,6 +342,8 @@ def _process_community_news_sources(
     max_per_run = 3
 
     for article_url in article_urls:
+        if summary.get("gemini_articles_used", 0) >= MAX_ARTICLES_PER_RUN:
+            break
         if written_here >= max_per_run:
             break
         if article_url in existing_urls:
@@ -374,6 +418,7 @@ def _process_community_news_sources(
             )
             existing_urls.add(article_url)
             summary["written"] += 1
+            summary["gemini_articles_used"] = summary.get("gemini_articles_used", 0) + 1
             written_here += 1
         except FullpitchAPIError as exc:
             msg = f"Failed to ingest community article '{title[:60]}': {exc}"
@@ -397,6 +442,7 @@ def run_news_agent() -> dict[str, Any]:
         "skipped_duplicate": 0,
         "skipped_irrelevant": 0,
         "written": 0,
+        "gemini_articles_used": 0,
         "errors": [],
     }
 
@@ -417,6 +463,13 @@ def run_news_agent() -> dict[str, Any]:
     # ── Web sources ───────────────────────────────────────────────────────
 
     for src in web_sources:
+        if summary["gemini_articles_used"] >= MAX_ARTICLES_PER_RUN:
+            logger.info(
+                "News agent Gemini budget exhausted (%d articles this run)",
+                MAX_ARTICLES_PER_RUN,
+            )
+            break
+
         url = src["url"]
         league = (src.get("league") or "").strip().lower()
 
@@ -446,6 +499,15 @@ def run_news_agent() -> dict[str, Any]:
             msg = f"Failed to fetch {url}: {exc}"
             logger.error(msg)
             summary["errors"].append(msg)
+            continue
+
+        articles = _limit_articles_for_gemini(
+            articles,
+            summary,
+            existing_urls=existing_urls,
+            cutoff=cutoff,
+        )
+        if not articles:
             continue
 
         relevant_indexes = (
@@ -532,6 +594,7 @@ def run_news_agent() -> dict[str, Any]:
                 })
                 existing_urls.add(article_url)
                 summary["written"] += 1
+                summary["gemini_articles_used"] += 1
             except FullpitchAPIError as exc:
                 msg = f"Failed to ingest article '{title[:60]}': {exc}"
                 logger.error(msg)
@@ -558,9 +621,10 @@ def _classify_league(title: str, content: str, client) -> str:
     if client is None:
         return "general"
     try:
-        resp = client.models.generate_content(
-            model=GEMINI_REASONING,
-            contents=(
+        resp = generate_gemini_content(
+            client,
+            GEMINI_REASONING,
+            (
                 "Classify this rugby article into exactly one league category based on the "
                 "article title and content, not the source domain. Source domain alone does "
                 "not determine league.\n\n"
@@ -588,6 +652,7 @@ def _classify_league(title: str, content: str, client) -> str:
                 f"Content: {content[:1200]}\n\n"
                 "Reply with ONLY the category name, nothing else."
             ),
+            max_output_tokens=MAX_OUTPUT_TOKENS_CLASSIFICATION,
         )
         category = resp.text.strip().lower()
         valid = {

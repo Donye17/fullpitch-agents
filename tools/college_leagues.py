@@ -5,7 +5,12 @@ from __future__ import annotations
 import html
 import re
 
-from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
+from tools.gemini_relevance import (
+    GEMINI_FREE_TIER_MODEL,
+    MAX_OUTPUT_TOKENS_CLASSIFICATION,
+    MAX_OUTPUT_TOKENS_SUMMARY,
+    generate_gemini_content,
+)
 
 VALID_COLLEGE_LEAGUES = {
     "craa-d1a",
@@ -73,9 +78,10 @@ def classify_college_league_with_gemini(
         return default if default in VALID_COLLEGE_LEAGUES else "college"
 
     try:
-        response = client.models.generate_content(
-            model=GEMINI_FREE_TIER_MODEL,
-            contents=(
+        response = generate_gemini_content(
+            client,
+            GEMINI_FREE_TIER_MODEL,
+            (
                 "Classify this US college rugby content into exactly one league tag.\n\n"
                 "Valid tags:\n"
                 "- craa-d1a: CRAA Men's D1A. Use for D1A or D1-A.\n"
@@ -92,6 +98,7 @@ def classify_college_league_with_gemini(
                 f"Title: {title}\n"
                 f"Content: {content[:1600]}"
             ),
+            max_output_tokens=MAX_OUTPUT_TOKENS_CLASSIFICATION,
         )
         league = response.text.strip().lower()
         return league if league in VALID_COLLEGE_LEAGUES else default

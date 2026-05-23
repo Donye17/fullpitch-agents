@@ -1,7 +1,7 @@
 """Content Agent — AI-written match reports, recaps, and spotlights.
 
 Schedule: Triggered by other agents after data ingest.
-Models: gemini-2.5-flash for the available Gemini account model.
+Models: gemini-2.5-flash for match reports; gemini-2.5-flash-lite for summaries.
 Writes to: /api/v1/ingest/article
 """
 
@@ -13,13 +13,18 @@ from pathlib import Path
 from typing import Any
 
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
-from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
+from tools.gemini_relevance import (
+    GEMINI_FREE_TIER_MODEL,
+    GEMINI_WRITING_PRO,
+    MAX_OUTPUT_TOKENS_MATCH_REPORT,
+    MAX_OUTPUT_TOKENS_SUMMARY,
+    generate_gemini_content,
+)
 from tools.text_utils import clean_text
 
 logger = logging.getLogger(__name__)
 
 GEMINI_WRITING_MID = GEMINI_FREE_TIER_MODEL
-GEMINI_WRITING_PRO = GEMINI_FREE_TIER_MODEL
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
@@ -29,6 +34,13 @@ PROMPTS = {
     "article_summary": "article_summary.txt",
     "standings_recap": "standings_recap.txt",
     "player_spotlight": "player_spotlight.txt",
+}
+
+LONG_FORM_PROMPTS = {
+    "match_report_mlr",
+    "match_report_college",
+    "standings_recap",
+    "player_spotlight",
 }
 
 
@@ -58,9 +70,19 @@ def generate_content(prompt_name: str, variables: dict[str, str], model: str | N
     for key, value in variables.items():
         template = template.replace(f"{{{key}}}", value)
 
-    use_model = model or GEMINI_WRITING_PRO
+    use_model = model or (GEMINI_WRITING_PRO if prompt_name in LONG_FORM_PROMPTS else GEMINI_WRITING_MID)
+    max_tokens = (
+        MAX_OUTPUT_TOKENS_MATCH_REPORT
+        if prompt_name in {"match_report_mlr", "match_report_college"}
+        else MAX_OUTPUT_TOKENS_SUMMARY
+    )
     try:
-        resp = client.models.generate_content(model=use_model, contents=template)
+        resp = generate_gemini_content(
+            client,
+            use_model,
+            template,
+            max_output_tokens=max_tokens,
+        )
         return clean_text(resp.text)
     except Exception:
         logger.exception("Content generation failed for prompt '%s'", prompt_name)
@@ -71,11 +93,15 @@ def run() -> None:
     logger.info("Content agent started")
     api = FullpitchAPI()
 
-    # TODO: implement full pipeline
-    #   1. Query for matches that need reports (completed, no article)
-    #   2. Load appropriate prompt template
-    #   3. Generate content with the configured Gemini model
-    #   4. Pipe output through clean_text()
-    #   5. Submit as draft article via /api/v1/ingest/article
-    #   6. Log run to AgentLog
+    try:
+        matches = api.get_matches(status=["final", "completed"], limit=100)
+    except FullpitchAPIError as exc:
+        logger.warning("Content agent could not list completed matches: %s", exc)
+        matches = []
+
+    for match in matches:
+        if match.get("hasReport") or match.get("summaryArticleId"):
+            continue
+        # TODO: generate report when pipeline is wired to generate_content()
+
     logger.info("Content agent complete")

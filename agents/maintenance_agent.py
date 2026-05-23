@@ -19,7 +19,11 @@ from urllib.parse import urlparse
 from tools.college_leagues import classify_college_league
 from tools.editorial_ai import normalize_feed_summary, shorten_title
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
-from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
+from tools.gemini_relevance import (
+    GEMINI_FREE_TIER_MODEL,
+    MAX_OUTPUT_TOKENS_CLASSIFICATION,
+    generate_gemini_content,
+)
 from tools.scraper import (
     ScraperError,
     extract_og_image,
@@ -266,9 +270,10 @@ def _classify_league_with_gemini(title: str, content: str, client) -> str | None
         return None
 
     try:
-        response = client.models.generate_content(
-            model=GEMINI_REASONING,
-            contents=(
+        response = generate_gemini_content(
+            client,
+            GEMINI_REASONING,
+            (
                 "Reclassify this rugby article into exactly one league category based on "
                 "title and content, not source domain.\n\n"
                 "Categories:\n"
@@ -296,6 +301,7 @@ def _classify_league_with_gemini(title: str, content: str, client) -> str | None
                 f"Content: {content[:1200]}\n\n"
                 "Reply with ONLY the category name."
             ),
+            max_output_tokens=MAX_OUTPUT_TOKENS_CLASSIFICATION,
         )
         league = response.text.strip().lower()
         return league if league in VALID_LEAGUES else None

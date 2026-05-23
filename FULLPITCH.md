@@ -47,8 +47,8 @@ Fullpitch (`fullpitch.app`) is the only comprehensive US rugby data platform —
 | Staging | Vercel Preview + Neon DB branch | Free — separate from production |
 | Agent hosting | Railway | $5/month — Python, always-on |
 | Agent framework | Google ADK (Python) | Multi-agent orchestration |
-| Agent model — reasoning | `gemini-2.5-flash` | Agent logic, classification, dedup |
-| Agent model — writing mid | `gemini-2.5-flash` | Summaries, recaps |
+| Agent model — reasoning | `gemini-2.5-flash-lite` | Classification, relevance, structured extraction |
+| Agent model — writing mid | `gemini-2.5-flash-lite` | Summaries, recaps, maintenance |
 | Agent model — writing pro | `gemini-2.5-flash` | Match reports, spotlights |
 
 **Repo locations (local):**
@@ -57,7 +57,7 @@ Fullpitch (`fullpitch.app`) is the only comprehensive US rugby data platform —
 
 > [!important] Locked Decisions — Never Change
 > - Agents = Google ADK Python on Railway. Never TypeScript. Never Cloudflare Workers.
-> - Use only `gemini-2.5-flash`; it is the only Gemini model available on this account.
+> - Use `gemini-2.5-flash-lite` for classification, relevance, and structured extraction; reserve `gemini-2.5-flash` for match reports and long-form content.
 > - UI = Tailwind + shadcn/ui. Mobile-first always.
 > - Auth = Clerk. Three roles: `admin`, `program_rep`, `user`
 > - All REST API routes versioned: `/api/v1/`
@@ -219,7 +219,7 @@ Agents ingest data AND write content from it. All prompts live in versioned file
 |-------------|-------|---------|-------------|
 | Match report (MLR) | `gemini-2.5-flash` | After final score written | Draft → admin approves |
 | Match report (college) | `gemini-2.5-flash` | After score written | Draft → admin approves |
-| Article summary | `gemini-2.5-flash` | On article ingest | Auto-publish |
+| Article summary | `gemini-2.5-flash-lite` | On article ingest | Auto-publish |
 | Standings recap | `gemini-2.5-flash` | Weekly | Draft → admin approves |
 | Player spotlight | `gemini-2.5-flash` | Manual trigger | Draft → admin approves |
 
@@ -311,9 +311,9 @@ fullpitch-agents/
 ### Gemini Model Constants
 
 ```python
-GEMINI_REASONING   = "gemini-2.5-flash"       # agent logic, classification, dedup
-GEMINI_WRITING_MID = "gemini-2.5-flash"        # summaries, recaps, mid content
-GEMINI_WRITING_PRO = "gemini-2.5-flash"        # match reports, spotlights
+GEMINI_REASONING   = "gemini-2.5-flash-lite"  # classification, relevance, structured extraction
+GEMINI_WRITING_MID = "gemini-2.5-flash-lite"  # summaries, recaps, maintenance
+GEMINI_WRITING_PRO = "gemini-2.5-flash"       # match reports, spotlights
 ```
 
 ---
@@ -527,6 +527,7 @@ These must be copied to new project before deleting old folder:
 | May 2026 | Maintenance agent split into fast mode every cycle for last-24-hour articles and full mode at 3 AM UTC for all historical articles. |
 | May 2026 | MLR and WER live data sources moved to NA Rugby DB after majorleague.rugby score URLs returned 404; shared parser handles standings, fixtures, results, team aliases, and a 1-second NA Rugby DB request pause. |
 | May 2026 | MLR and WER live scores now use Playwright full-page screenshots + Gemini Vision (`gemini-2.5-flash-lite`) instead of HTML parsing; `main.py` live loop polls both leagues with HT=300s / live=60s / idle=300s intervals; NARDB ingest skips `final`/`completed` fixtures so the live loop owns finalized scores; `mark_past_matches_final()` skips matches already finalized by the live loop (`events.liveScoreSource` + both scores set). |
+| May 2026 | Gemini spend reduction: `gemini-2.5-flash-lite` for classification, relevance, summaries, and score extraction; `gemini-2.5-flash` reserved for match reports and long-form content; hard `max_output_tokens` caps (256/1024/4096); news agent capped at 20 Gemini-processed articles per hourly run; content agent skips matches with existing reports. |
 | May 2026 | Fixed NA Rugby DB team resolution: fixture parsing now uses left/right team links for home/away, and API team lookup no longer treats the first `/teams` result as a name match. |
 | May 2026 | News agent now extracts source `publishedDate` from article meta/time/JSON-LD without falling back to today; fast maintenance backfills missing `publishedDate` from source pages. |
 | May 2026 | `community` league tag + US Rugby Foundation (`usrugbyfoundation.org/news`) source: `news_agent.py` dedicated path (max 3/run, published ≥ 2026-05-01, fundraising title skips, `source` = US Rugby Foundation), maintenance `VALID_LEAGUES` + Gemini prompt include `community`. |

@@ -20,7 +20,12 @@ from tools.article_filter import has_minimum_content, is_viable_article_candidat
 from tools.college_leagues import classify_college_league, classify_college_league_with_gemini
 from tools.editorial_ai import normalize_feed_summary, shorten_title
 from tools.fullpitch_api import FullpitchAPI, FullpitchAPIError
-from tools.gemini_relevance import GEMINI_FREE_TIER_MODEL
+from tools.gemini_relevance import (
+    GEMINI_FREE_TIER_MODEL,
+    MAX_OUTPUT_TOKENS_CLASSIFICATION,
+    MAX_OUTPUT_TOKENS_SUMMARY,
+    generate_gemini_content,
+)
 from tools.scraper import (
     ScraperError,
     extract_og_image,
@@ -135,9 +140,10 @@ def _classify_article(title: str, snippet: str, client) -> str:
         return "college"
 
     try:
-        response = client.models.generate_content(
-            model=GEMINI_REASONING,
-            contents=(
+        response = generate_gemini_content(
+            client,
+            GEMINI_REASONING,
+            (
                 "Classify this CRAA rugby article as exactly one tag.\n\n"
                 "Valid tags:\n"
                 "- craa-d1a: CRAA Men's D1A. Use for D1A or D1-A.\n"
@@ -150,6 +156,7 @@ def _classify_article(title: str, snippet: str, client) -> str:
                 f"Summary: {snippet[:1000]}\n\n"
                 "Reply with ONLY one tag."
             ),
+            max_output_tokens=MAX_OUTPUT_TOKENS_CLASSIFICATION,
         )
         category = response.text.strip().lower()
         if category == "college":
@@ -168,7 +175,12 @@ def _generate_summary(title: str, content: str, source: str, client) -> str | No
     try:
         template = _load_summary_prompt()
         prompt = template.replace("{title}", title).replace("{source}", source).replace("{content}", content[:4000])
-        response = client.models.generate_content(model=GEMINI_WRITING_MID, contents=prompt)
+        response = generate_gemini_content(
+            client,
+            GEMINI_WRITING_MID,
+            prompt,
+            max_output_tokens=MAX_OUTPUT_TOKENS_SUMMARY,
+        )
         return normalize_feed_summary(response.text)
     except Exception:
         logger.exception("Gemini CRAA summary failed for %s", title[:80])

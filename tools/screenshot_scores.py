@@ -11,6 +11,11 @@ from typing import Any
 
 from playwright.sync_api import sync_playwright
 
+from tools.gemini_relevance import (
+    MAX_OUTPUT_TOKENS_CLASSIFICATION,
+    generate_gemini_content,
+)
+
 logger = logging.getLogger(__name__)
 
 GEMINI_VISION_MODEL = "gemini-2.5-flash-lite"
@@ -150,9 +155,10 @@ def fetch_live_score_via_screenshot(url: str, timeout: int = 30000) -> dict[str,
 
         from google.genai import types
 
-        response = client.models.generate_content(
-            model=GEMINI_VISION_MODEL,
-            contents=[
+        response = generate_gemini_content(
+            client,
+            GEMINI_VISION_MODEL,
+            [
                 types.Content(
                     role="user",
                     parts=[
@@ -161,6 +167,7 @@ def fetch_live_score_via_screenshot(url: str, timeout: int = 30000) -> dict[str,
                     ],
                 )
             ],
+            max_output_tokens=MAX_OUTPUT_TOKENS_CLASSIFICATION,
         )
         raw_text = _extract_response_text(response)
         if not raw_text:
