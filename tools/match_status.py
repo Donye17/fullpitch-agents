@@ -35,17 +35,9 @@ def _away_name(match: dict[str, Any]) -> str:
 
 
 def _live_loop_already_finalized(match: dict[str, Any]) -> bool:
-    """Skip auto-finalization when the live score loop already wrote the result."""
-    events = match.get("events")
-    if not isinstance(events, dict):
-        return False
-
-    if not (events.get("liveScoreSource") or events.get("needs_verification")):
-        return False
-
-    home_score = match.get("homeScore")
-    away_score = match.get("awayScore")
-    return home_score is not None and away_score is not None
+    """Skip auto-finalization only when the match is already marked completed."""
+    status = str(match.get("status") or "").lower()
+    return status in {"completed", "final"}
 
 
 def mark_past_matches_final(api: FullpitchAPI, league: str) -> int:

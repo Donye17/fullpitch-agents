@@ -588,11 +588,15 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
 
         home_score = parsed["home_score"]
         away_score = parsed["away_score"]
-        status = parsed["status"]
-        period = parsed.get("period")
+        period = str(parsed.get("period") or "").upper() or None
+        status = (
+            "completed"
+            if period in {"FT", "AET"} or parsed["status"] == "final"
+            else parsed["status"]
+        )
         page_html: str | None = None
 
-        if status in {"live", "final"}:
+        if status in {"live", "completed"}:
             current_home = match.get("homeScore") or 0
             current_away = match.get("awayScore") or 0
 
@@ -624,7 +628,7 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
                 "events": {
                     "sourceUrl": url,
                     "liveScoreSource": "majorleague.rugby",
-                    "needs_verification": status == "final",
+                    "needs_verification": status == "completed",
                 },
             }
             if week:
@@ -634,7 +638,7 @@ def _check_live_match_pages(api: FullpitchAPI, season: str, summary: dict[str, A
             api.upsert_match(payload)
             summary["live_matches_updated"] += 1
             logger.info("Updated MLR live page score: %s %s-%s %s (%s)", _match_team_name(match, "home"), home_score, away_score, _match_team_name(match, "away"), status)
-            if status == "final":
+            if status == "completed":
                 try:
                     page_html = fetch_text(url, timeout=20.0)
                 except ScraperError:

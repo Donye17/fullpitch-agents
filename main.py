@@ -113,9 +113,10 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> str 
 
     home_score = parsed["home_score"]
     away_score = parsed["away_score"]
-    status = parsed["status"]
-    period = parsed.get("period")
-    if status not in {"live", "final"}:
+    period = str(parsed.get("period") or "").upper() or None
+    is_final_period = period in {"FT", "AET"}
+    status = "completed" if is_final_period or parsed["status"] == "final" else "live"
+    if status not in {"live", "completed"}:
         return period
 
     if (
@@ -125,20 +126,45 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> str 
     ):
         return period
 
-    api.update_match(
-        match["id"],
-        {
+    league = str(match.get("league") or "mlr").lower()
+    events: dict[str, object] = {
+        "sourceUrl": url,
+        "liveScoreSource": _live_score_source(match),
+        "needs_verification": status == "completed",
+    }
+    if period:
+        events["period"] = period
+
+    if status == "completed":
+        payload: dict[str, object] = {
+            "homeTeamId": match["homeTeamId"],
+            "awayTeamId": match["awayTeamId"],
             "homeScore": home_score,
             "awayScore": away_score,
-            "status": status,
-            "events": {
-                "sourceUrl": url,
-                "liveScoreSource": _live_score_source(match),
-                "needs_verification": status == "final",
-                **({"period": period} if period else {}),
+            "matchDate": match["kickoffTime"],
+            "league": league,
+            "season": match.get("season"),
+            "status": "completed",
+            "agentName": "live-score-loop",
+            "region": "national",
+            "events": events,
+        }
+        if league == "mlr":
+            week = _week_from_match(match)
+            if week:
+                payload["round"] = str(week)
+        api.upsert_match(payload)
+    else:
+        api.update_match(
+            match["id"],
+            {
+                "homeScore": home_score,
+                "awayScore": away_score,
+                "status": status,
+                "events": events,
             },
-        },
-    )
+        )
+
     logger.info(
         "Live score tracker updated %s %s-%s %s (%s)",
         _match_team_name(match, "home"),
@@ -147,13 +173,13 @@ def check_and_update_score(match: dict, api: FullpitchAPI | None = None) -> str 
         _match_team_name(match, "away"),
         status,
     )
-    if status == "final" and current_status != "completed":
+    if status == "completed" and current_status != "completed":
         on_match_final(
             match,
             (home_score, away_score),
             match_slug=url,
             api=api,
-            week=_week_from_match(match) if str(match.get("league") or "").lower() == "mlr" else None,
+            week=_week_from_match(match) if league == "mlr" else None,
             venue=match.get("venue"),
         )
     return period
