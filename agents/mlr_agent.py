@@ -155,6 +155,18 @@ def _is_today_or_live(match: dict[str, Any], now: datetime | None = None) -> boo
 
 
 def _parse_live_status(text: str) -> str:
+    scoreboard_match = re.search(
+        r"\b([A-Z]{2,4})\s+(1T|2T|HT|FT|AET)\s+(\d{1,3})\s+(\d{1,3})\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if scoreboard_match:
+        period = scoreboard_match.group(2).upper()
+        if period in {"FT", "AET"}:
+            return "final"
+        if period in {"1T", "2T", "HT"}:
+            return "live"
+
     lowered = text.lower()
     if re.search(r"\b(ft|full time|final|finished)\b", lowered):
         return "final"
@@ -328,6 +340,21 @@ def _extract_current_score(lines: list[str], match: dict[str, Any]) -> tuple[tup
     away_abbr = _match_team_abbr(match, "away")
     live_lines = _pre_history_lines(lines)
     live_text = " ".join(live_lines)
+
+    scoreboard_pattern = r"\b([A-Z]{2,4})\s+(1T|2T|HT|FT|AET)\s+(\d{1,3})\s+(\d{1,3})\b"
+    scoreboard_match = re.search(scoreboard_pattern, live_text, flags=re.IGNORECASE)
+    if scoreboard_match:
+        scoreboard_score = (
+            int(scoreboard_match.group(3)),
+            int(scoreboard_match.group(4)),
+        )
+        _log_score_pattern(
+            "mlr-scoreboard-pattern",
+            scoreboard_score,
+            scoreboard_match.group(0),
+        )
+        return scoreboard_score, "mlr-scoreboard-pattern", scoreboard_match.group(0)
+
     top_text = live_text[:500]
 
     compact_score = _compact_live_score(live_text, match)
@@ -363,7 +390,11 @@ def _extract_current_score(lines: list[str], match: dict[str, Any]) -> tuple[tup
     if dash_score:
         return dash_score, "first-pre-history-dash-score", dash_match.group(0)
 
-    standalone_match = re.search(r"(?<!\d)(\d{1,3})(?!\d)\D+(?<!\d)(\d{1,3})(?!\d)", top_text)
+    clean_text = re.sub(r"\bWeek\s+\d+\b", "", live_text, flags=re.IGNORECASE)
+    clean_text = re.sub(r"\bRound\s+\d+\b", "", clean_text, flags=re.IGNORECASE)
+    top_clean_text = clean_text[:500]
+
+    standalone_match = re.search(r"(?<!\d)(\d{1,3})(?!\d)\D+(?<!\d)(\d{1,3})(?!\d)", top_clean_text)
     standalone_score = (
         (int(standalone_match.group(1)), int(standalone_match.group(2)))
         if standalone_match
@@ -372,7 +403,7 @@ def _extract_current_score(lines: list[str], match: dict[str, Any]) -> tuple[tup
     _log_score_pattern(
         "top-500-standalone-numbers",
         standalone_score,
-        top_text[max((standalone_match.start() if standalone_match else 0) - 80, 0) : (standalone_match.end() if standalone_match else 0) + 80],
+        top_clean_text[max((standalone_match.start() if standalone_match else 0) - 80, 0) : (standalone_match.end() if standalone_match else 0) + 80],
     )
     if standalone_score:
         return standalone_score, "top-500-standalone-numbers", standalone_match.group(0)
